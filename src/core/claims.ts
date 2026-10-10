@@ -9,6 +9,7 @@ export interface ChowOption {
 
 export interface LegalClaims {
   canWin: boolean;
+  canKong: boolean;
   canPung: boolean;
   chowOptions: ChowOption[];
 }
@@ -95,11 +96,25 @@ export function canPungHand(hand: readonly PhysicalTile[], discardCode: TileCode
   return handTilesMatching(hand, discardCode).length >= 2;
 }
 
+export function canKongHand(hand: readonly PhysicalTile[], discardCode: TileCode): boolean {
+  return handTilesMatching(hand, discardCode).length >= 3;
+}
+
 export function pungTileIds(hand: readonly PhysicalTile[], discardCode: TileCode): [string, string] | null {
   const matches = handTilesMatching(hand, discardCode);
   if (matches.length < 2) return null;
   const sorted = [...matches].sort((a, b) => a.id.localeCompare(b.id));
   return [sorted[0]!.id, sorted[1]!.id];
+}
+
+export function kongTileIds(
+  hand: readonly PhysicalTile[],
+  discardCode: TileCode,
+): [string, string, string] | null {
+  const matches = handTilesMatching(hand, discardCode);
+  if (matches.length < 3) return null;
+  const sorted = [...matches].sort((a, b) => a.id.localeCompare(b.id));
+  return [sorted[0]!.id, sorted[1]!.id, sorted[2]!.id];
 }
 
 /** Legal claim summary for a seat against the open discard (caller supplies win check). */
@@ -109,15 +124,17 @@ export function legalClaimsForSeat(
   seat: Seat,
   discardCode: TileCode,
   canWin: boolean,
+  wallHasReplacement: boolean,
 ): LegalClaims {
   const canPung = canPungHand(seatState.hand, discardCode);
+  const canKong = wallHasReplacement && canKongHand(seatState.hand, discardCode);
   const chowOptions =
     canChowFrom(discarder, seat) && !seatState.drawn ? listChowOptions(seatState.hand, discardCode) : [];
-  return { canWin, canPung, chowOptions };
+  return { canWin, canKong, canPung, chowOptions };
 }
 
 export function hasAnyClaim(claims: LegalClaims): boolean {
-  return claims.canWin || claims.canPung || claims.chowOptions.length > 0;
+  return claims.canWin || claims.canKong || claims.canPung || claims.chowOptions.length > 0;
 }
 
 /** Nearest seat after `discarder` among `candidates` (table order). */
@@ -141,8 +158,16 @@ export function pendingClaimSeats(
   discardCode: TileCode,
   canWin: (seat: Seat) => boolean,
 ): Seat[] {
+  const wallHasReplacement = state.wall.length > 0;
   return otherSeats(discarder).filter((seat) => {
-    const claims = legalClaimsForSeat(state.seats[seat], discarder, seat, discardCode, canWin(seat));
+    const claims = legalClaimsForSeat(
+      state.seats[seat],
+      discarder,
+      seat,
+      discardCode,
+      canWin(seat),
+      wallHasReplacement,
+    );
     return hasAnyClaim(claims);
   });
 }

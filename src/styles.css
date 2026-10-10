@@ -59,8 +59,19 @@ header p { margin: 6px 0 0; font-size: 13px; opacity: .65; letter-spacing: 1px; 
   letter-spacing: 2px; padding: 12px 28px; border-radius: 12px;
   background: linear-gradient(180deg, rgba(60,30,12,.9), rgba(20,10,6,.95));
 }
-#claim-win { background: linear-gradient(180deg, rgba(120,40,30,.95), rgba(50,10,8,.95)); border-color: #f0a060; }
+#claim-win, #declare-win { background: linear-gradient(180deg, rgba(120,40,30,.95), rgba(50,10,8,.95)); border-color: #f0a060; }
+#claim-kong { background: linear-gradient(180deg, rgba(80,50,20,.95), rgba(30,16,6,.95)); border-color: #e0b060; }
 #claim-pung { background: linear-gradient(180deg, rgba(40,70,90,.95), rgba(12,24,36,.95)); }
+#self-bar {
+  position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%);
+  z-index: 3; display: flex; gap: 12px; align-items: center;
+}
+#self-bar[hidden] { display: none; }
+#self-bar button {
+  cursor: pointer; border: 1px solid rgba(245,196,106,.55); color: #fff3d6; font: inherit;
+  letter-spacing: 2px; padding: 12px 28px; border-radius: 12px;
+  background: linear-gradient(180deg, rgba(60,30,12,.9), rgba(20,10,6,.95));
+}
 .chow-options { display: flex; gap: 8px; flex-wrap: wrap; }
 .chow-options:empty { display: none; }
 .chow-options button {

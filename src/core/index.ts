@@ -10,13 +10,16 @@ export {
   applyCommand,
   buildExhaustiveDrawSettlement,
   canWinOnDiscard,
+  canWinOnDraw,
   displayHand,
   ensureDrawn,
   legalClaims,
   legalDiscardTileIds,
+  legalSelfActions,
   PLAYER_SEAT,
   seatHasClaimOptions,
   totalTileCount,
+  type LegalSelfActions,
 } from './hand';
 export { createRng, shuffleInPlace } from './rng';
 export {
@@ -35,8 +38,10 @@ export type {
   ExhaustiveDrawSettlement,
   HandPhase,
   HandState,
+  LastDrawKind,
   LockedResponse,
   Meld,
+  MeldKind,
   ResponseMode,
   ResponseWindow,
   Seat,

@@ -1,10 +1,12 @@
 import {
   applyCommand,
   canWinOnDiscard,
+  canWinOnDraw,
   createFullSet,
   ensureDrawn,
   legalClaims,
   legalDiscardTileIds,
+  legalSelfActions,
   PLAYER_SEAT,
   type ChowOption,
   type DomainEvent,
@@ -32,10 +34,13 @@ export interface PlaySessionSnapshot {
   seed: number | null;
   settlement: ExhaustiveDrawSettlement | null;
   winSettlement: WinSettlement | null;
-  /** True when the player may claim 胡 on the open discard. */
+  /** True when the player may claim 胡 on the open discard, or self-draw 胡. */
   playerCanWin: boolean;
+  playerCanKong: boolean;
   playerCanPung: boolean;
   playerChowOptions: ChowOption[];
+  playerConcealedKongCodes: TileCode[];
+  playerAddedKongCodes: TileCode[];
 }
 
 /**
@@ -67,9 +72,14 @@ export class PlaySession {
     const claims =
       this.state?.phase === 'awaiting_claim_response'
         ? legalClaims(this.state, PLAYER_SEAT)
-        : { canWin: false, canPung: false, chowOptions: [] as ChowOption[] };
+        : { canWin: false, canKong: false, canPung: false, chowOptions: [] as ChowOption[] };
 
-    const playerCanWin =
+    const self =
+      this.state?.phase === 'awaiting_discard' && this.state.turn === PLAYER_SEAT
+        ? legalSelfActions(this.state, PLAYER_SEAT)
+        : { concealedKongCodes: [] as TileCode[], addedKongCodes: [] as TileCode[], canWin: false };
+
+    const playerCanWinOnDiscard =
       (this.state?.phase === 'awaiting_win_response' || this.state?.phase === 'awaiting_claim_response') &&
       this.state.responseWindow !== null &&
       this.state.responseWindow.pending.includes(PLAYER_SEAT) &&
@@ -83,9 +93,12 @@ export class PlaySession {
       seed: this.seed,
       settlement: this.state?.settlement ?? null,
       winSettlement: this.state?.winSettlement ?? null,
-      playerCanWin: Boolean(playerCanWin),
+      playerCanWin: Boolean(playerCanWinOnDiscard) || self.canWin,
+      playerCanKong: claims.canKong,
       playerCanPung: claims.canPung,
       playerChowOptions: claims.chowOptions,
+      playerConcealedKongCodes: self.concealedKongCodes,
+      playerAddedKongCodes: self.addedKongCodes,
     };
   }
 
@@ -192,6 +205,33 @@ export class PlaySession {
         this.state = drawn.state;
         this.events.push(...drawn.events);
         const seat = this.state.turn;
+        const self = legalSelfActions(this.state, seat);
+        if (self.canWin && !this.forcePassWins) {
+          const result = applyCommand(this.state, { type: 'DeclareWin', seat });
+          this.state = result.state;
+          this.events.push(...result.events);
+          continue;
+        }
+        if (self.concealedKongCodes[0] && !this.passClaims) {
+          const result = applyCommand(this.state, {
+            type: 'DeclareConcealedKong',
+            seat,
+            code: self.concealedKongCodes[0],
+          });
+          this.state = result.state;
+          this.events.push(...result.events);
+          continue;
+        }
+        if (self.addedKongCodes[0] && !this.passClaims) {
+          const result = applyCommand(this.state, {
+            type: 'DeclareAddedKong',
+            seat,
+            code: self.addedKongCodes[0],
+          });
+          this.state = result.state;
+          this.events.push(...result.events);
+          continue;
+        }
         const tileId = pickAutoDiscard(this.state, seat);
         const result = applyCommand(this.state, { type: 'Discard', seat, tileId });
         this.state = result.state;
@@ -243,6 +283,7 @@ export class PlaySession {
       let command:
         | { type: 'Pass'; seat: Seat }
         | { type: 'ClaimWin'; seat: Seat }
+        | { type: 'ClaimKong'; seat: Seat }
         | { type: 'ClaimPung'; seat: Seat }
         | { type: 'ClaimChow'; seat: Seat; tileIds: [string, string] };
 
@@ -250,6 +291,8 @@ export class PlaySession {
         command = { type: 'Pass', seat };
       } else if (claims.canWin) {
         command = { type: 'ClaimWin', seat };
+      } else if (claims.canKong) {
+        command = { type: 'ClaimKong', seat };
       } else if (claims.canPung) {
         command = { type: 'ClaimPung', seat };
       } else if (claims.chowOptions[0]) {
@@ -310,16 +353,64 @@ export class PlaySession {
   }
 
   claimWin(): void {
+    if (!this.state) return;
+
+    if (this.status === 'awaiting_player_discard' && canWinOnDraw(this.state, PLAYER_SEAT)) {
+      const result = applyCommand(this.state, { type: 'DeclareWin', seat: PLAYER_SEAT });
+      this.state = result.state;
+      this.events.push(...result.events);
+      this.selectedTileId = null;
+      this.advance();
+      this.emit();
+      return;
+    }
+
     if (
-      (this.status !== 'awaiting_player_win_response' &&
-        this.status !== 'awaiting_player_claim_response') ||
-      !this.state
+      this.status !== 'awaiting_player_win_response' &&
+      this.status !== 'awaiting_player_claim_response'
     ) {
       return;
     }
     const result = applyCommand(this.state, { type: 'ClaimWin', seat: PLAYER_SEAT });
     this.state = result.state;
     this.events.push(...result.events);
+    this.advance();
+    this.emit();
+  }
+
+  claimKong(): void {
+    if (this.status !== 'awaiting_player_claim_response' || !this.state) return;
+    const result = applyCommand(this.state, { type: 'ClaimKong', seat: PLAYER_SEAT });
+    this.state = result.state;
+    this.events.push(...result.events);
+    this.advance();
+    this.emit();
+  }
+
+  declareConcealedKong(code: TileCode): void {
+    if (this.status !== 'awaiting_player_discard' || !this.state) return;
+    const result = applyCommand(this.state, {
+      type: 'DeclareConcealedKong',
+      seat: PLAYER_SEAT,
+      code,
+    });
+    this.state = result.state;
+    this.events.push(...result.events);
+    this.selectedTileId = null;
+    this.advance();
+    this.emit();
+  }
+
+  declareAddedKong(code: TileCode): void {
+    if (this.status !== 'awaiting_player_discard' || !this.state) return;
+    const result = applyCommand(this.state, {
+      type: 'DeclareAddedKong',
+      seat: PLAYER_SEAT,
+      code,
+    });
+    this.state = result.state;
+    this.events.push(...result.events);
+    this.selectedTileId = null;
     this.advance();
     this.emit();
   }
@@ -465,6 +556,7 @@ function buildPlayerPinghuResponseState(): HandState {
     },
     settlement: null,
     winSettlement: null,
+    lastDrawKind: null,
   };
 }
 

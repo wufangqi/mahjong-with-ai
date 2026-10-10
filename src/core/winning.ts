@@ -50,7 +50,6 @@ function isThirteenOrphans(codes: readonly TileCode[]): boolean {
     return false;
   }
   if (!pairFound) return false;
-  // No non-orphan tiles allowed.
   for (const code of counts.keys()) {
     if (!ORPHANS.includes(code)) return false;
   }
@@ -79,7 +78,6 @@ function tryStandard(counts: Map<TileCode, number>, meldsLeft: number): boolean 
     return counts.size === 0;
   }
 
-  // Pick the lowest remaining tile as an anchor.
   let anchor: TileCode | null = null;
   for (const code of FACE_CODES) {
     if ((counts.get(code) ?? 0) > 0) {
@@ -89,13 +87,11 @@ function tryStandard(counts: Map<TileCode, number>, meldsLeft: number): boolean 
   }
   if (!anchor) return meldsLeft === 0;
 
-  // Triplet
   {
     const next = cloneCounts(counts);
     if (remove(next, anchor, 3) && tryStandard(next, meldsLeft - 1)) return true;
   }
 
-  // Sequence (numbered suits only)
   if (isNumberedSuit(anchor)) {
     const suit = anchor[0]!;
     const rank = Number(anchor[1]);
@@ -116,6 +112,7 @@ function tryStandard(counts: Map<TileCode, number>, meldsLeft: number): boolean 
 function isStandardWin(codes: readonly TileCode[], exposedMeldCount = 0): boolean {
   const meldsLeft = 4 - exposedMeldCount;
   if (meldsLeft < 0) return false;
+  // Kong replacement keeps concealed length identical to pung/chow melds.
   const expected = 2 + meldsLeft * 3;
   if (codes.length !== expected) return false;
   const base = countsOf(codes);
@@ -129,34 +126,55 @@ function isStandardWin(codes: readonly TileCode[], exposedMeldCount = 0): boolea
 }
 
 /** Whitelist fan ids recognized by the core (ADR-0002). */
-export type FanPatternId = 'pinghu' | 'qidui' | 'shisanyao';
+export type FanPatternId =
+  | 'pinghu'
+  | 'qidui'
+  | 'shisanyao'
+  | 'gangshangkaihua';
 
 export interface WinEvaluation {
   patterns: FanPatternId[];
   fan: number;
 }
 
+export interface EvaluateWinOptions {
+  /** True when the winning tile was a kong replacement (杠上开花). */
+  gangShangKaiHua?: boolean;
+}
+
 /**
  * Score a completed hand. 平胡 only applies when no other listed pattern
- * matches (spec: 平胡 exclusion). 七对 / 十三幺 require a fully concealed hand.
+ * matches. 杠上开花 stacks with other non-平胡 patterns and replaces bare 平胡.
  */
 export function evaluateWin(
   codes: readonly TileCode[],
   exposedMeldCount = 0,
+  options: EvaluateWinOptions = {},
 ): WinEvaluation {
+  const gangShangKaiHua = Boolean(options.gangShangKaiHua);
+
+  let patterns: FanPatternId[] = [];
+
   if (exposedMeldCount === 0) {
     if (codes.length !== 14) return { patterns: [], fan: 0 };
-    const patterns: FanPatternId[] = [];
     if (isSevenPairs(codes)) patterns.push('qidui');
     if (isThirteenOrphans(codes)) patterns.push('shisanyao');
     if (patterns.length === 0 && isStandardWin(codes, 0)) {
       patterns.push('pinghu');
     }
-    return { patterns, fan: patterns.length };
+  } else {
+    if (!isStandardWin(codes, exposedMeldCount)) return { patterns: [], fan: 0 };
+    patterns.push('pinghu');
   }
 
-  if (!isStandardWin(codes, exposedMeldCount)) return { patterns: [], fan: 0 };
-  return { patterns: ['pinghu'], fan: 1 };
+  if (patterns.length === 0) return { patterns: [], fan: 0 };
+
+  if (gangShangKaiHua) {
+    patterns = patterns.filter((p) => p !== 'pinghu');
+    patterns.push('gangshangkaihua');
+  }
+
+  return { patterns, fan: patterns.length };
 }
 
 /** True when face codes form a recognized winning hand under 爽胡规则 (fully concealed). */

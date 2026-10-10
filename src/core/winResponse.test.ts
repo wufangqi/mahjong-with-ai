@@ -39,6 +39,7 @@ function pinghuResponseState(): HandState {
     responseWindow: null,
     settlement: null,
     winSettlement: null,
+    lastDrawKind: null,
   };
 }
 

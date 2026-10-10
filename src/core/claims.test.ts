@@ -61,6 +61,7 @@ function openClaimWindow(opts: {
     responseWindow: null,
     settlement: null,
     winSettlement: null,
+    lastDrawKind: 'normal',
   };
 
   expect(totalTileCount(state)).toBe(FULL_SET_SIZE);

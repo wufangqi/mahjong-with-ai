@@ -114,6 +114,20 @@ describe('evaluateWin', () => {
       ),
     ).toEqual({ patterns: [], fan: 0 });
   });
+
+  it('tags 杠上开花 in place of bare 平胡', () => {
+    expect(evaluateWin(PINGHU, 0, { gangShangKaiHua: true })).toEqual({
+      patterns: ['gangshangkaihua'],
+      fan: 1,
+    });
+  });
+
+  it('stacks 杠上开花 with 七对', () => {
+    expect(evaluateWin(QIDUI, 0, { gangShangKaiHua: true })).toEqual({
+      patterns: ['qidui', 'gangshangkaihua'],
+      fan: 2,
+    });
+  });
 });
 
 describe('waitingTileCodes', () => {

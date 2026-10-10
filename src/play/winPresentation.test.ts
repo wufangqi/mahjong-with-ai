@@ -22,6 +22,10 @@ describe('sceneTierForPatterns', () => {
     expect(sceneTierForPatterns(['qidui'])).toBe('big');
     expect(sceneTierForPatterns(['shisanyao'])).toBe('top');
   });
+
+  it('maps 杠上开花 to big', () => {
+    expect(sceneTierForPatterns(['gangshangkaihua'])).toBe('big');
+  });
 });
 
 describe('planWinScene', () => {

@@ -26,9 +26,13 @@ export function bootPlayApp(): void {
   const startBtn = mustEl<HTMLButtonElement>('start');
   const responseBar = mustEl<HTMLElement>('response-bar');
   const claimWinBtn = mustEl<HTMLButtonElement>('claim-win');
+  const claimKongBtn = mustEl<HTMLButtonElement>('claim-kong');
   const claimPungBtn = mustEl<HTMLButtonElement>('claim-pung');
   const chowOptionsEl = mustEl<HTMLElement>('chow-options');
   const passBtn = mustEl<HTMLButtonElement>('pass-win');
+  const selfBar = mustEl<HTMLElement>('self-bar');
+  const declareWinBtn = mustEl<HTMLButtonElement>('declare-win');
+  const kongOptionsEl = mustEl<HTMLElement>('kong-options');
   const drawPanel = mustEl<HTMLElement>('draw-panel');
   const drawSeats = mustEl<HTMLElement>('draw-seats');
   const nextHandBtn = mustEl<HTMLButtonElement>('next-hand');
@@ -115,6 +119,28 @@ export function bootPlayApp(): void {
     }
   };
 
+  const renderKongOptions = (): void => {
+    const snap = session.snapshot();
+    kongOptionsEl.replaceChildren();
+    if (snap.status !== 'awaiting_player_discard') return;
+    for (const code of snap.playerConcealedKongCodes) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.testid = 'declare-concealed-kong';
+      btn.textContent = `暗杠 ${formatTileCodes([code])}`;
+      btn.addEventListener('click', () => session.declareConcealedKong(code));
+      kongOptionsEl.append(btn);
+    }
+    for (const code of snap.playerAddedKongCodes) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.testid = 'declare-added-kong';
+      btn.textContent = `加杠 ${formatTileCodes([code])}`;
+      btn.addEventListener('click', () => session.declareAddedKong(code));
+      kongOptionsEl.append(btn);
+    }
+  };
+
   const renderWinPanel = (): void => {
     const snap = session.snapshot();
     if (snap.status !== 'hand_won' || !snap.winSettlement) {
@@ -158,6 +184,7 @@ export function bootPlayApp(): void {
       statusEl.textContent = '输入种子并开始一局';
       metaEl.textContent = '';
       responseBar.hidden = true;
+      selfBar.hidden = true;
       drawPanel.hidden = true;
       winPanel.hidden = true;
       return;
@@ -175,16 +202,26 @@ export function bootPlayApp(): void {
       snap.status === 'awaiting_player_win_response' ||
       snap.status === 'awaiting_player_claim_response';
     responseBar.hidden = !responding;
-    claimWinBtn.hidden = !snap.playerCanWin;
+    claimWinBtn.hidden = responding ? !snap.playerCanWin : true;
+    claimKongBtn.hidden = snap.status !== 'awaiting_player_claim_response' || !snap.playerCanKong;
     claimPungBtn.hidden = snap.status !== 'awaiting_player_claim_response' || !snap.playerCanPung;
     renderChowOptions();
+
+    const selfActions =
+      snap.status === 'awaiting_player_discard' &&
+      (snap.playerCanWin ||
+        snap.playerConcealedKongCodes.length > 0 ||
+        snap.playerAddedKongCodes.length > 0);
+    selfBar.hidden = !selfActions;
+    declareWinBtn.hidden = !snap.playerCanWin || snap.status !== 'awaiting_player_discard';
+    renderKongOptions();
 
     if (snap.status === 'awaiting_player_discard') {
       statusEl.textContent = snap.selectedTileId
         ? '再次点击同一张牌确认出牌，或拖入牌河'
-        : '轮到你出牌：点击选牌';
+        : '轮到你出牌：可杠 / 自摸 / 出牌';
     } else if (snap.status === 'awaiting_player_claim_response') {
-      statusEl.textContent = '可响应：选择吃 / 碰 / 过（无倒计时）';
+      statusEl.textContent = '可响应：选择胡 / 杠 / 碰 / 吃 / 过（无倒计时）';
     } else if (snap.status === 'awaiting_player_win_response') {
       statusEl.textContent = snap.playerCanWin ? '可胡或过' : '请选择过';
     } else if (snap.status === 'exhaustive_draw') {
@@ -214,7 +251,9 @@ export function bootPlayApp(): void {
   });
 
   claimWinBtn.addEventListener('click', () => session.claimWin());
+  claimKongBtn.addEventListener('click', () => session.claimKong());
   claimPungBtn.addEventListener('click', () => session.claimPung());
+  declareWinBtn.addEventListener('click', () => session.claimWin());
   passBtn.addEventListener('click', () => session.passResponse());
   nextHandBtn.addEventListener('click', () => {
     const nextSeed = (session.snapshot().seed ?? DEFAULT_SEED) + 1;

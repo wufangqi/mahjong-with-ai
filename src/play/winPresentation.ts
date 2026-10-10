@@ -16,12 +16,14 @@ const PATTERN_TIER: Record<FanPatternId, SceneTier> = {
   pinghu: 'basic',
   qidui: 'big',
   shisanyao: 'top',
+  gangshangkaihua: 'big',
 };
 
 const PATTERN_LABEL: Record<FanPatternId, string> = {
   pinghu: '平胡',
   qidui: '七对',
   shisanyao: '十三幺',
+  gangshangkaihua: '杠上开花',
 };
 
 const TIER_RANK: Record<SceneTier, number> = { basic: 0, big: 1, top: 2 };

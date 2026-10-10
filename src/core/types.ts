@@ -11,13 +11,15 @@ export type HandPhase =
   | 'exhaustive_draw'
   | 'hand_won';
 
-/** Exposed meld formed by claiming a discard (吃 / 碰). */
+export type MeldKind = 'chow' | 'pung' | 'exposed_kong' | 'concealed_kong' | 'added_kong';
+
+/** Exposed meld formed by claiming a discard or declaring a kong. */
 export interface Meld {
-  kind: 'chow' | 'pung';
+  kind: MeldKind;
   tiles: PhysicalTile[];
-  /** Seat that discarded the claimed tile. */
-  fromSeat: Seat;
-  claimedTileId: string;
+  /** Seat that discarded the claimed tile; null for concealed kong. */
+  fromSeat: Seat | null;
+  claimedTileId: string | null;
 }
 
 export interface SeatState {
@@ -32,6 +34,7 @@ export type ResponseMode = 'win_only' | 'claims';
 export type LockedResponse =
   | { kind: 'pass' }
   | { kind: 'win' }
+  | { kind: 'kong' }
   | { kind: 'pung' }
   | { kind: 'chow'; tileIds: [string, string] };
 
@@ -65,17 +68,20 @@ export interface WinnerResult {
   seat: Seat;
   patterns: FanPatternId[];
   fan: number;
-  /** Completed 14-tile concealed hand including the winning tile. */
+  /** Completed concealed tiles including the winning tile (excludes exposed meld tiles). */
   hand: PhysicalTile[];
 }
 
 /** Win settlement shown after HandWon. */
 export interface WinSettlement {
   winners: WinnerResult[];
+  /** Discarder for discard wins; winning seat for self-draw. */
   discarder: Seat;
   tile: PhysicalTile;
-  winKind: 'discard';
+  winKind: 'discard' | 'self_draw';
 }
+
+export type LastDrawKind = 'normal' | 'kong_replacement';
 
 export interface HandState {
   schemaVersion: 1;
@@ -90,6 +96,8 @@ export interface HandState {
   responseWindow: ResponseWindow | null;
   settlement: ExhaustiveDrawSettlement | null;
   winSettlement: WinSettlement | null;
+  /** Kind of the current seat's drawn tile, if any. */
+  lastDrawKind: LastDrawKind | null;
 }
 
 export type DomainEvent =
@@ -99,24 +107,24 @@ export type DomainEvent =
       wallRemaining: number;
       hands: Record<Seat, { hand: PhysicalTile[]; drawn: PhysicalTile | null }>;
     }
-  | { type: 'TileDrawn'; seat: Seat; tile: PhysicalTile }
+  | { type: 'TileDrawn'; seat: Seat; tile: PhysicalTile; kind: LastDrawKind }
   | { type: 'TileDiscarded'; seat: Seat; tile: PhysicalTile }
   | { type: 'WinResponseOpened'; discarder: Seat; tile: PhysicalTile }
   | { type: 'ClaimResponseOpened'; discarder: Seat; tile: PhysicalTile; pending: Seat[] }
   | {
       type: 'MeldFormed';
       seat: Seat;
-      kind: 'chow' | 'pung';
+      kind: MeldKind;
       tiles: PhysicalTile[];
-      fromSeat: Seat;
-      claimedTileId: string;
+      fromSeat: Seat | null;
+      claimedTileId: string | null;
     }
   | {
       type: 'HandWon';
       winners: WinnerResult[];
       discarder: Seat;
       tile: PhysicalTile;
-      winKind: 'discard';
+      winKind: 'discard' | 'self_draw';
     }
   | { type: 'ExhaustiveDraw'; settlement: ExhaustiveDrawSettlement };
 
@@ -124,8 +132,12 @@ export type Command =
   | { type: 'StartHand'; seed: number; dealer?: Seat }
   | { type: 'Discard'; seat: Seat; tileId: string }
   | { type: 'ClaimWin'; seat: Seat }
+  | { type: 'ClaimKong'; seat: Seat }
   | { type: 'ClaimPung'; seat: Seat }
   | { type: 'ClaimChow'; seat: Seat; tileIds: [string, string] }
+  | { type: 'DeclareConcealedKong'; seat: Seat; code: TileCode }
+  | { type: 'DeclareAddedKong'; seat: Seat; code: TileCode }
+  | { type: 'DeclareWin'; seat: Seat }
   | { type: 'Pass'; seat: Seat };
 
 export interface CommandResult {

@@ -1,5 +1,6 @@
 import {
   hasAnyClaim,
+  kongTileIds,
   legalClaimsForSeat,
   listChowOptions,
   nearestAfter,
@@ -127,12 +128,23 @@ function assertConservation(state: HandState): void {
   }
 }
 
-function drawFromWall(state: HandState, seat: Seat): PhysicalTile {
+function drawFromWallHead(state: HandState, seat: Seat): PhysicalTile {
   const tile = state.wall.shift();
   if (!tile) throw new Error('wall is empty');
   const seatState = state.seats[seat];
   if (seatState.drawn) throw new Error(`seat ${seat} already holds a drawn tile`);
   seatState.drawn = tile;
+  state.lastDrawKind = 'normal';
+  return tile;
+}
+
+function drawReplacementFromTail(state: HandState, seat: Seat): PhysicalTile {
+  const tile = state.wall.pop();
+  if (!tile) throw new Error('no kong replacement available');
+  const seatState = state.seats[seat];
+  if (seatState.drawn) throw new Error(`seat ${seat} already holds a drawn tile`);
+  seatState.drawn = tile;
+  state.lastDrawKind = 'kong_replacement';
   return tile;
 }
 
@@ -141,7 +153,7 @@ function visibleHand(seat: SeatState): PhysicalTile[] {
 }
 
 function expectedConcealedBeforeDiscard(seat: SeatState): number {
-  // 14 with a draw, or 11 / 8 / 5 after a successful chow/pung (must discard).
+  // Kong replacement restores the 4th tile, so meld count × 3 still holds.
   return 14 - seat.melds.length * 3;
 }
 
@@ -159,13 +171,28 @@ export function canWinOnDiscard(state: HandState, seat: Seat, tileCode: TileCode
   return isWinningHand([...handCodes(seatState), tileCode], exposed);
 }
 
-function buildWinnerResult(state: HandState, seat: Seat, winningTile: PhysicalTile): WinnerResult {
+/** Whether the current seat can declare a self-draw win on their drawn tile. */
+export function canWinOnDraw(state: HandState, seat: Seat): boolean {
+  if (state.phase !== 'awaiting_discard' || state.turn !== seat) return false;
+  const seatState = state.seats[seat];
+  if (!seatState.drawn) return false;
+  const exposed = seatState.melds.length;
+  const expected = 13 - exposed * 3;
+  if (seatState.hand.length !== expected) return false;
+  return isWinningHand([...handCodes(seatState), seatState.drawn.code], exposed);
+}
+
+function buildWinnerResult(
+  state: HandState,
+  seat: Seat,
+  winningTile: PhysicalTile,
+  gangShangKaiHua: boolean,
+): WinnerResult {
   const seatState = state.seats[seat];
   const hand = sortHand([...seatState.hand, winningTile]);
-  const evaluation = evaluateWin(
-    hand.map((t) => t.code),
-    seatState.melds.length,
-  );
+  const evaluation = evaluateWin(hand.map((t) => t.code), seatState.melds.length, {
+    gangShangKaiHua,
+  });
   if (evaluation.patterns.length === 0) {
     throw new Error(`seat ${seat} claimed win without a matching pattern`);
   }
@@ -182,24 +209,29 @@ function emitHandWon(
   winnerSeats: readonly Seat[],
   discarder: Seat,
   tile: PhysicalTile,
+  winKind: 'discard' | 'self_draw',
+  gangShangKaiHua: boolean,
 ): DomainEvent {
-  const winners = winnerSeats.map((seat) => buildWinnerResult(state, seat, tile));
+  const winners = winnerSeats.map((seat) =>
+    buildWinnerResult(state, seat, tile, gangShangKaiHua && seat === discarder),
+  );
   const winSettlement: WinSettlement = {
     winners,
     discarder,
     tile,
-    winKind: 'discard',
+    winKind,
   };
   state.phase = 'hand_won';
   state.settlement = null;
   state.winSettlement = winSettlement;
   state.responseWindow = null;
+  state.lastDrawKind = null;
   return {
     type: 'HandWon',
     winners,
     discarder,
     tile,
-    winKind: 'discard',
+    winKind,
   };
 }
 
@@ -207,10 +239,7 @@ export function buildExhaustiveDrawSettlement(state: HandState): ExhaustiveDrawS
   const seats = ([0, 1, 2, 3] as Seat[]).map((seat) => {
     const seatState = state.seats[seat];
     const hand = sortHand([...seatState.hand]);
-    const waiting = waitingTileCodes(
-      hand.map((t) => t.code),
-      seatState.melds.length,
-    );
+    const waiting = waitingTileCodes(hand.map((t) => t.code), seatState.melds.length);
     return {
       seat,
       hand,
@@ -261,9 +290,10 @@ function startHand(seed: number, forcedDealer?: Seat): CommandResult {
     responseWindow: null,
     settlement: null,
     winSettlement: null,
+    lastDrawKind: null,
   };
 
-  drawFromWall(state, dealer);
+  const drawn = drawFromWallHead(state, dealer);
   assertConservation(state);
 
   const events: DomainEvent[] = [
@@ -278,7 +308,7 @@ function startHand(seed: number, forcedDealer?: Seat): CommandResult {
         3: { hand: [...state.seats[3].hand], drawn: state.seats[3].drawn },
       },
     },
-    { type: 'TileDrawn', seat: dealer, tile: state.seats[dealer].drawn! },
+    { type: 'TileDrawn', seat: dealer, tile: drawn, kind: 'normal' },
   ];
 
   return { state, events };
@@ -296,6 +326,26 @@ function removeHandTiles(seat: SeatState, tileIds: readonly string[]): PhysicalT
   for (const id of tileIds) {
     const index = seat.hand.findIndex((t) => t.id === id);
     if (index < 0) throw new Error(`tile ${id} is not in hand`);
+    removed.push(seat.hand.splice(index, 1)[0]!);
+  }
+  seat.hand = sortHand(seat.hand);
+  return removed;
+}
+
+/** Remove matching tiles from hand and/or drawn (for concealed / added kong). */
+function removeVisibleMatching(
+  seat: SeatState,
+  code: TileCode,
+  count: number,
+): PhysicalTile[] {
+  const removed: PhysicalTile[] = [];
+  if (seat.drawn?.code === code) {
+    removed.push(seat.drawn);
+    seat.drawn = null;
+  }
+  while (removed.length < count) {
+    const index = seat.hand.findIndex((t) => t.code === code);
+    if (index < 0) throw new Error(`not enough ${code} to remove`);
     removed.push(seat.hand.splice(index, 1)[0]!);
   }
   seat.hand = sortHand(seat.hand);
@@ -342,11 +392,11 @@ function discard(state: HandState, seat: Seat, tileId: string): CommandResult {
 
   seatState.river.push(discarded);
   seatState.hand = sortHand(seatState.hand);
+  state.lastDrawKind = null;
 
   const events: DomainEvent[] = [{ type: 'TileDiscarded', seat, tile: discarded }];
 
   if (state.wall.length === 0) {
-    // Last normal draw was already taken; only win responses remain.
     state.phase = 'awaiting_win_response';
     state.responseWindow = {
       mode: 'win_only',
@@ -393,10 +443,9 @@ function finishWinOnlyWindow(state: HandState): DomainEvent[] {
   if (window.pending.length > 0) return [];
 
   if (window.winners.length > 0) {
-    return [emitHandWon(state, window.winners, window.discarder, window.tile)];
+    return [emitHandWon(state, window.winners, window.discarder, window.tile, 'discard', false)];
   }
 
-  // All passed: final discard → 流局; otherwise only this opportunity is spent.
   if (state.wall.length === 0) {
     const settlement = buildExhaustiveDrawSettlement(state);
     state.phase = 'exhaustive_draw';
@@ -413,7 +462,7 @@ function finishWinOnlyWindow(state: HandState): DomainEvent[] {
   return [];
 }
 
-function applyMeld(
+function applyChowOrPung(
   state: HandState,
   seat: Seat,
   kind: 'chow' | 'pung',
@@ -434,6 +483,7 @@ function applyMeld(
   state.turn = seat;
   state.phase = 'awaiting_discard';
   state.responseWindow = null;
+  state.lastDrawKind = null;
   return {
     type: 'MeldFormed',
     seat,
@@ -444,6 +494,42 @@ function applyMeld(
   };
 }
 
+function applyExposedKong(state: HandState, seat: Seat): DomainEvent[] {
+  const window = state.responseWindow;
+  if (!window) throw new Error('no response window');
+  if (state.wall.length === 0) throw new Error('no kong replacement available');
+
+  const ids = kongTileIds(state.seats[seat].hand, window.tile.code);
+  if (!ids) throw new Error(`seat ${seat} locked kong but lacks tiles`);
+
+  const claimed = takeDiscardFromRiver(state, window.discarder, window.tile.id);
+  const fromHand = removeHandTiles(state.seats[seat], ids);
+  const tiles = sortHand([...fromHand, claimed]);
+  const meld: Meld = {
+    kind: 'exposed_kong',
+    tiles,
+    fromSeat: window.discarder,
+    claimedTileId: claimed.id,
+  };
+  state.seats[seat].melds.push(meld);
+  state.turn = seat;
+  state.phase = 'awaiting_discard';
+  state.responseWindow = null;
+
+  const replacement = drawReplacementFromTail(state, seat);
+  return [
+    {
+      type: 'MeldFormed',
+      seat,
+      kind: 'exposed_kong',
+      tiles: [...tiles],
+      fromSeat: window.discarder,
+      claimedTileId: claimed.id,
+    },
+    { type: 'TileDrawn', seat, tile: replacement, kind: 'kong_replacement' },
+  ];
+}
+
 function resolveClaimsWindow(state: HandState): DomainEvent[] {
   const window = state.responseWindow;
   if (!window || window.mode !== 'claims') throw new Error('no claims window');
@@ -451,7 +537,13 @@ function resolveClaimsWindow(state: HandState): DomainEvent[] {
 
   const winners = ([0, 1, 2, 3] as Seat[]).filter((s) => window.locked[s]?.kind === 'win');
   if (winners.length > 0) {
-    return [emitHandWon(state, winners, window.discarder, window.tile)];
+    return [emitHandWon(state, winners, window.discarder, window.tile, 'discard', false)];
+  }
+
+  const kongSeats = ([0, 1, 2, 3] as Seat[]).filter((s) => window.locked[s]?.kind === 'kong');
+  const kongWinner = nearestAfter(window.discarder, kongSeats);
+  if (kongWinner !== null) {
+    return applyExposedKong(state, kongWinner);
   }
 
   const pungSeats = ([0, 1, 2, 3] as Seat[]).filter((s) => window.locked[s]?.kind === 'pung');
@@ -459,7 +551,7 @@ function resolveClaimsWindow(state: HandState): DomainEvent[] {
   if (pungWinner !== null) {
     const ids = pungTileIds(state.seats[pungWinner].hand, window.tile.code);
     if (!ids) throw new Error(`seat ${pungWinner} locked pung but lacks tiles`);
-    return [applyMeld(state, pungWinner, 'pung', ids)];
+    return [applyChowOrPung(state, pungWinner, 'pung', ids)];
   }
 
   const chowSeats = ([0, 1, 2, 3] as Seat[]).filter((s) => window.locked[s]?.kind === 'chow');
@@ -467,10 +559,9 @@ function resolveClaimsWindow(state: HandState): DomainEvent[] {
   if (chowWinner !== null) {
     const locked = window.locked[chowWinner];
     if (!locked || locked.kind !== 'chow') throw new Error('missing chow lock');
-    return [applyMeld(state, chowWinner, 'chow', locked.tileIds)];
+    return [applyChowOrPung(state, chowWinner, 'chow', locked.tileIds)];
   }
 
-  // Everyone passed — resume with the discarder's next seat drawing.
   state.phase = 'awaiting_discard';
   state.turn = nextSeat(window.discarder);
   state.responseWindow = null;
@@ -518,6 +609,27 @@ function claimWin(state: HandState, seat: Seat): CommandResult {
   return { state, events };
 }
 
+function claimKong(state: HandState, seat: Seat): CommandResult {
+  if (state.phase !== 'awaiting_claim_response' || !state.responseWindow) {
+    throw new Error('kong claim is not allowed in the current phase');
+  }
+  const window = state.responseWindow;
+  if (window.mode !== 'claims') throw new Error('kong is not allowed in a win-only window');
+  if (!window.pending.includes(seat)) {
+    throw new Error(`seat ${seat} has no pending claim response`);
+  }
+  if (state.wall.length === 0) {
+    throw new Error('kong is unavailable without a replacement tile');
+  }
+  if (!kongTileIds(state.seats[seat].hand, window.tile.code)) {
+    throw new Error(`seat ${seat} cannot kong ${window.tile.code}`);
+  }
+
+  const events = lockResponse(state, seat, { kind: 'kong' });
+  assertConservation(state);
+  return { state, events };
+}
+
 function claimPung(state: HandState, seat: Seat): CommandResult {
   if (state.phase !== 'awaiting_claim_response' || !state.responseWindow) {
     throw new Error('pung claim is not allowed in the current phase');
@@ -552,8 +664,7 @@ function claimChow(state: HandState, seat: Seat, tileIds: [string, string]): Com
   const options = listChowOptions(state.seats[seat].hand, window.tile.code);
   const sortedIds = [...tileIds].sort() as [string, string];
   const match = options.find(
-    (opt) =>
-      [...opt.tileIds].sort().join(',') === sortedIds.join(','),
+    (opt) => [...opt.tileIds].sort().join(',') === sortedIds.join(','),
   );
   if (!match) {
     throw new Error(`seat ${seat} cannot chow with ${tileIds.join(',')}`);
@@ -581,6 +692,177 @@ function pass(state: HandState, seat: Seat): CommandResult {
   return { state, events };
 }
 
+function countCodeInVisible(seat: SeatState, code: TileCode): number {
+  let n = seat.hand.filter((t) => t.code === code).length;
+  if (seat.drawn?.code === code) n += 1;
+  return n;
+}
+
+export interface LegalSelfActions {
+  concealedKongCodes: TileCode[];
+  addedKongCodes: TileCode[];
+  canWin: boolean;
+}
+
+/** Self-turn actions available after drawing and before discarding. */
+export function legalSelfActions(state: HandState, seat: Seat): LegalSelfActions {
+  if (state.phase !== 'awaiting_discard' || state.turn !== seat) {
+    return { concealedKongCodes: [], addedKongCodes: [], canWin: false };
+  }
+  const seatState = state.seats[seat];
+  if (!seatState.drawn) {
+    return { concealedKongCodes: [], addedKongCodes: [], canWin: false };
+  }
+
+  const wallHasReplacement = state.wall.length > 0;
+  const concealedKongCodes: TileCode[] = [];
+  const addedKongCodes: TileCode[] = [];
+
+  if (wallHasReplacement) {
+    const seen = new Set<TileCode>();
+    for (const t of visibleHand(seatState)) {
+      if (seen.has(t.code)) continue;
+      seen.add(t.code);
+      if (countCodeInVisible(seatState, t.code) >= 4) {
+        concealedKongCodes.push(t.code);
+      }
+    }
+    concealedKongCodes.sort();
+
+    for (const meld of seatState.melds) {
+      if (meld.kind !== 'pung') continue;
+      const code = meld.tiles[0]!.code;
+      if (countCodeInVisible(seatState, code) >= 1) {
+        addedKongCodes.push(code);
+      }
+    }
+    addedKongCodes.sort();
+  }
+
+  return {
+    concealedKongCodes,
+    addedKongCodes,
+    canWin: canWinOnDraw(state, seat),
+  };
+}
+
+function declareConcealedKong(state: HandState, seat: Seat, code: TileCode): CommandResult {
+  if (state.phase !== 'awaiting_discard' || state.turn !== seat) {
+    throw new Error('concealed kong is not allowed in the current phase');
+  }
+  const seatState = state.seats[seat];
+  if (!seatState.drawn) {
+    throw new Error('concealed kong requires a drawn tile');
+  }
+  if (state.wall.length === 0) {
+    throw new Error('kong is unavailable without a replacement tile');
+  }
+  if (countCodeInVisible(seatState, code) < 4) {
+    throw new Error(`seat ${seat} cannot declare concealed kong of ${code}`);
+  }
+
+  const tiles = sortHand(removeVisibleMatching(seatState, code, 4));
+  const meld: Meld = {
+    kind: 'concealed_kong',
+    tiles,
+    fromSeat: null,
+    claimedTileId: null,
+  };
+  seatState.melds.push(meld);
+  // If the drawn tile was not part of the kong, fold it into the hand before replacement.
+  if (seatState.drawn) {
+    seatState.hand = sortHand([...seatState.hand, seatState.drawn]);
+    seatState.drawn = null;
+  }
+
+  const replacement = drawReplacementFromTail(state, seat);
+  assertConservation(state);
+  return {
+    state,
+    events: [
+      {
+        type: 'MeldFormed',
+        seat,
+        kind: 'concealed_kong',
+        tiles: [...tiles],
+        fromSeat: null,
+        claimedTileId: null,
+      },
+      { type: 'TileDrawn', seat, tile: replacement, kind: 'kong_replacement' },
+    ],
+  };
+}
+
+function declareAddedKong(state: HandState, seat: Seat, code: TileCode): CommandResult {
+  if (state.phase !== 'awaiting_discard' || state.turn !== seat) {
+    throw new Error('added kong is not allowed in the current phase');
+  }
+  const seatState = state.seats[seat];
+  if (!seatState.drawn) {
+    throw new Error('added kong requires a drawn tile');
+  }
+  if (state.wall.length === 0) {
+    throw new Error('kong is unavailable without a replacement tile');
+  }
+
+  const pungIndex = seatState.melds.findIndex(
+    (m) => m.kind === 'pung' && m.tiles[0]?.code === code,
+  );
+  if (pungIndex < 0) {
+    throw new Error(`seat ${seat} has no pung of ${code} to upgrade`);
+  }
+  if (countCodeInVisible(seatState, code) < 1) {
+    throw new Error(`seat ${seat} lacks ${code} for added kong`);
+  }
+
+  const [extra] = removeVisibleMatching(seatState, code, 1);
+  const pung = seatState.melds[pungIndex]!;
+  const tiles = sortHand([...pung.tiles, extra!]);
+  seatState.melds[pungIndex] = {
+    kind: 'added_kong',
+    tiles,
+    fromSeat: pung.fromSeat,
+    claimedTileId: pung.claimedTileId,
+  };
+  if (seatState.drawn) {
+    seatState.hand = sortHand([...seatState.hand, seatState.drawn]);
+    seatState.drawn = null;
+  }
+
+  // 加杠不可被抢杠胡 — no response window.
+  const replacement = drawReplacementFromTail(state, seat);
+  assertConservation(state);
+  return {
+    state,
+    events: [
+      {
+        type: 'MeldFormed',
+        seat,
+        kind: 'added_kong',
+        tiles: [...tiles],
+        fromSeat: pung.fromSeat,
+        claimedTileId: pung.claimedTileId,
+      },
+      { type: 'TileDrawn', seat, tile: replacement, kind: 'kong_replacement' },
+    ],
+  };
+}
+
+function declareWin(state: HandState, seat: Seat): CommandResult {
+  if (!canWinOnDraw(state, seat)) {
+    throw new Error(`seat ${seat} cannot declare a self-draw win`);
+  }
+  const seatState = state.seats[seat];
+  const winningTile = seatState.drawn!;
+  const gangShangKaiHua = state.lastDrawKind === 'kong_replacement';
+  // Fold drawn into the hand snapshot via buildWinnerResult; clear drawn after.
+  const event = emitHandWon(state, [seat], seat, winningTile, 'self_draw', gangShangKaiHua);
+  seatState.hand = sortHand([...seatState.hand, winningTile]);
+  seatState.drawn = null;
+  assertConservation(state);
+  return { state, events: [event] };
+}
+
 /**
  * Pure rule-core command applicator.
  * Returns a new authoritative state plus domain events (ADR-0007).
@@ -598,10 +880,18 @@ export function applyCommand(prev: HandState | null, command: Command): CommandR
       return discard(state, command.seat, command.tileId);
     case 'ClaimWin':
       return claimWin(state, command.seat);
+    case 'ClaimKong':
+      return claimKong(state, command.seat);
     case 'ClaimPung':
       return claimPung(state, command.seat);
     case 'ClaimChow':
       return claimChow(state, command.seat, command.tileIds);
+    case 'DeclareConcealedKong':
+      return declareConcealedKong(state, command.seat, command.code);
+    case 'DeclareAddedKong':
+      return declareAddedKong(state, command.seat, command.code);
+    case 'DeclareWin':
+      return declareWin(state, command.seat);
     case 'Pass':
       return pass(state, command.seat);
     default: {
@@ -622,6 +912,7 @@ export function ensureDrawn(prev: HandState): CommandResult {
 
   const expectedAfterMeldDiscard = 13 - seatState.melds.length * 3;
   // After chow/pung the seat holds one extra tile and must discard without drawing.
+  // After kong, replacement is already drawn as part of the kong command.
   if (seatState.hand.length === expectedAfterMeldDiscard + 1) {
     return { state: prev, events: [] };
   }
@@ -633,9 +924,9 @@ export function ensureDrawn(prev: HandState): CommandResult {
   }
 
   const state = cloneState(prev);
-  const tile = drawFromWall(state, seat);
+  const tile = drawFromWallHead(state, seat);
   assertConservation(state);
-  return { state, events: [{ type: 'TileDrawn', seat, tile }] };
+  return { state, events: [{ type: 'TileDrawn', seat, tile, kind: 'normal' }] };
 }
 
 export function legalDiscardTileIds(state: HandState, seat: Seat): string[] {
@@ -651,7 +942,12 @@ export function displayHand(seat: SeatState): PhysicalTile[] {
 export function legalClaims(state: HandState, seat: Seat) {
   const window = state.responseWindow;
   if (!window || state.phase !== 'awaiting_claim_response') {
-    return { canWin: false, canPung: false, chowOptions: [] as ReturnType<typeof listChowOptions> };
+    return {
+      canWin: false,
+      canKong: false,
+      canPung: false,
+      chowOptions: [] as ReturnType<typeof listChowOptions>,
+    };
   }
   return legalClaimsForSeat(
     state.seats[seat],
@@ -659,6 +955,7 @@ export function legalClaims(state: HandState, seat: Seat) {
     seat,
     window.tile.code,
     canWinOnDiscard(state, seat, window.tile.code),
+    state.wall.length > 0,
   );
 }
 
