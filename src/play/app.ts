@@ -1,5 +1,9 @@
 import { FULL_SET_SIZE, PLAYER_SEAT, totalTileCount, type Seat } from '../core';
 import { PlaySession } from '../game/session';
+import { listThemeOptions, loadTheme } from '../theme/catalog';
+import { ThemeManager } from '../theme/themeManager';
+import { isThemeId } from '../theme/schema';
+import type { ThemeId } from '../theme/types';
 import { TableView } from './tableView';
 import { formatTileCodes } from './tileLabels';
 import { patternLabels, WinSceneScheduler, type WinScenePlan } from './winPresentation';
@@ -18,12 +22,36 @@ const SEAT_NAMES: Record<Seat, string> = {
   3: '上家',
 };
 
+function browserStorage(): Storage {
+  try {
+    return window.localStorage;
+  } catch {
+    const map = new Map<string, string>();
+    return {
+      get length() {
+        return map.size;
+      },
+      clear: () => map.clear(),
+      getItem: (k) => map.get(k) ?? null,
+      setItem: (k, v) => {
+        map.set(k, v);
+      },
+      removeItem: (k) => {
+        map.delete(k);
+      },
+      key: () => null,
+    };
+  }
+}
+
 export function bootPlayApp(): void {
   const canvas = mustEl<HTMLCanvasElement>('c');
   const seedInput = mustEl<HTMLInputElement>('seed');
   const statusEl = mustEl<HTMLElement>('status');
   const metaEl = mustEl<HTMLElement>('meta');
   const startBtn = mustEl<HTMLButtonElement>('start');
+  const themeSelect = mustEl<HTMLSelectElement>('theme-select');
+  const themeNotice = mustEl<HTMLElement>('theme-notice');
   const responseBar = mustEl<HTMLElement>('response-bar');
   const claimWinBtn = mustEl<HTMLButtonElement>('claim-win');
   const claimKongBtn = mustEl<HTMLButtonElement>('claim-kong');
@@ -49,17 +77,66 @@ export function bootPlayApp(): void {
   const session = new PlaySession();
   const table = new TableView(canvas);
   const scenes = new WinSceneScheduler();
+  const themes = new ThemeManager({
+    storage: browserStorage(),
+    now: () => performance.now(),
+    schedule: (fn, ms) => {
+      window.setTimeout(fn, ms);
+    },
+    loadTheme,
+  });
   let lastHandWonEventCount = 0;
+  let sceneReleaseTimer: number | null = null;
+
+  themeSelect.replaceChildren();
+  for (const opt of listThemeOptions()) {
+    const el = document.createElement('option');
+    el.value = opt.id;
+    el.textContent = opt.displayName;
+    themeSelect.append(el);
+  }
+
+  const showThemeNotices = (notices: string[]): void => {
+    if (notices.length === 0) {
+      themeNotice.hidden = true;
+      themeNotice.textContent = '';
+      return;
+    }
+    themeNotice.hidden = false;
+    themeNotice.textContent = notices.join(' · ');
+    window.setTimeout(() => {
+      themeNotice.hidden = true;
+    }, 4200);
+  };
+
+  const syncThemeChrome = (): void => {
+    const id = themes.getActiveId();
+    themeSelect.value = id;
+    document.body.dataset.theme = id;
+    const palette = themes.getScenePalette() ?? themes.getApplied().palette;
+    document.documentElement.style.setProperty('--banner-basic', palette.bannerBasic);
+  };
+
+  const applyActiveTheme = (opts?: { from?: ReturnType<ThemeManager['getApplied']>; transitionMs?: number }): void => {
+    table.applyTheme(themes.getApplied(), opts);
+    syncThemeChrome();
+  };
 
   const showScene = (plans: WinScenePlan[]): void => {
     const plan = plans[0];
     if (!plan) return;
+    const palette = themes.captureScenePalette();
+    document.documentElement.style.setProperty('--banner-basic', palette.bannerBasic);
     bannerMain.textContent = plan.bannerMain;
     bannerSub.textContent = plan.bannerSub;
     banner.className = `show ${plan.tier}`;
     banner.style.setProperty('--delay', '0s');
-    window.setTimeout(() => {
+    if (sceneReleaseTimer !== null) window.clearTimeout(sceneReleaseTimer);
+    sceneReleaseTimer = window.setTimeout(() => {
+      themes.releaseScenePalette();
+      syncThemeChrome();
       if (banner.classList.contains('show')) banner.className = '';
+      sceneReleaseTimer = null;
     }, 2400);
   };
 
@@ -240,6 +317,21 @@ export function bootPlayApp(): void {
 
   session.subscribe(refresh);
 
+  themeSelect.addEventListener('change', () => {
+    const next = themeSelect.value;
+    if (!isThemeId(next)) {
+      themeSelect.value = themes.getActiveId();
+      return;
+    }
+    void (async () => {
+      const from = themes.getApplied();
+      const result = await themes.select(next as ThemeId);
+      applyActiveTheme({ from, transitionMs: result.transitionMs });
+      showThemeNotices(result.notices);
+      themeSelect.value = result.activeId;
+    })();
+  });
+
   startBtn.addEventListener('click', () => {
     const seed = Number.parseInt(seedInput.value, 10);
     if (!Number.isFinite(seed)) {
@@ -319,7 +411,7 @@ export function bootPlayApp(): void {
   frame();
 
   window.__play = {
-    ready: true,
+    ready: false,
     start: (seed: number) => {
       lastHandWonEventCount = 0;
       session.start(seed);
@@ -343,8 +435,28 @@ export function bootPlayApp(): void {
     },
     replayScene: () => scenes.replay(),
     lastScenePlans: () => scenes.getLastPlans(),
+    selectTheme: async (id: ThemeId) => {
+      const from = themes.getApplied();
+      const result = await themes.select(id);
+      applyActiveTheme({ from, transitionMs: result.transitionMs });
+      showThemeNotices(result.notices);
+      themeSelect.value = result.activeId;
+      return result;
+    },
+    activeThemeId: () => themes.getActiveId(),
+    themeApplied: () => themes.getApplied(),
+    scenePalette: () => themes.getScenePalette(),
+    themeNotices: () => themes.getNotices(),
+    themeRefCount: (id: ThemeId) => themes.getRefCount(id),
+    themeRetained: (id: ThemeId) => themes.isRetained(id),
+    ambientParticleKind: () => table.ambientParticleKind(),
+    tileBackPattern: () => table.tileBackPattern(),
   };
 
-  document.body.classList.add('ready');
-  session.start(DEFAULT_SEED);
+  void themes.start().then(() => {
+    applyActiveTheme();
+    document.body.classList.add('ready');
+    if (window.__play) window.__play.ready = true;
+    session.start(DEFAULT_SEED);
+  });
 }

@@ -277,6 +277,81 @@ export const backMat = new THREE.MeshStandardMaterial({
   roughness: 0.3,
   metalness: 0.05,
 });
+
+let backPatternTex: THREE.CanvasTexture | null = null;
+let backPatternKind: 'solid' | 'cloud' = 'solid';
+let backPatternColor = -1;
+
+function makeCloudBackTexture(baseHex: number): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext('2d')!;
+  const base = `#${baseHex.toString(16).padStart(6, '0')}`;
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, 256, 256);
+  // Gold cloud / ruyi scrolls on crimson — procedural, no external assets
+  ctx.strokeStyle = 'rgba(212,175,55,0.78)';
+  ctx.fillStyle = 'rgba(255,220,140,0.22)';
+  ctx.lineWidth = 3;
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 4; col++) {
+      const cx = 32 + col * 64;
+      const cy = 32 + row * 64;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, 22, 12, 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(cx + 14, cy - 6, 14, 8, -0.4, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/**
+ * Theme seam: update shared tile-back appearance without touching face materials.
+ * `cloud` applies a procedural gold cloud pattern (中式宫廷).
+ */
+export function setTileBackAppearance(opts: {
+  color: number;
+  pattern: 'solid' | 'cloud';
+}): void {
+  if (opts.pattern === 'cloud') {
+    if (backPatternKind !== 'cloud' || backPatternColor !== opts.color || !backPatternTex) {
+      backPatternTex?.dispose();
+      backPatternTex = makeCloudBackTexture(opts.color);
+      backPatternKind = 'cloud';
+      backPatternColor = opts.color;
+    }
+    backMat.map = backPatternTex;
+    backMat.color.setHex(0xffffff);
+    backMat.needsUpdate = true;
+    return;
+  }
+  if (backPatternTex) {
+    backPatternTex.dispose();
+    backPatternTex = null;
+  }
+  backPatternKind = 'solid';
+  backPatternColor = opts.color;
+  backMat.map = null;
+  backMat.color.setHex(opts.color);
+  backMat.needsUpdate = true;
+}
+
+/** @deprecated prefer setTileBackAppearance */
+export function setTileBackColor(hex: number): void {
+  setTileBackAppearance({ color: hex, pattern: 'solid' });
+}
+
+export function getTileBackPattern(): 'solid' | 'cloud' {
+  return backPatternKind;
+}
 const frontMats = new Map<TileCode, THREE.MeshStandardMaterial>();
 export function frontMaterial(code: TileCode): THREE.MeshStandardMaterial {
   let mat = frontMats.get(code);

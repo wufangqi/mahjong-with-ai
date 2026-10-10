@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>AI 爽胡麻将 · 吃碰与平胡</title>
+<title>AI 爽胡麻将 · 主题热切换</title>
 </head>
-<body class="play">
+<body class="play" data-theme="classic-green">
   <canvas id="c" data-testid="table-canvas"></canvas>
   <div id="banner" data-testid="win-banner" aria-hidden="true">
     <div id="banner-main" class="main">胡</div>
@@ -14,7 +14,7 @@
 
   <header>
     <h1>AI 爽胡麻将</h1>
-    <p>吃碰 · 平胡 basic · 结算</p>
+    <p>双主题热切换 · 吃碰 · 平胡</p>
   </header>
 
   <div id="hud">
@@ -23,8 +23,13 @@
       <input id="seed" data-testid="seed-input" type="number" value="42" />
     </label>
     <button id="start" data-testid="start-hand" type="button">开始一局</button>
+    <label class="theme-field">
+      <span>主题</span>
+      <select id="theme-select" data-testid="theme-select" aria-label="主题"></select>
+    </label>
     <a class="preview-link" href="./preview.html">效果预览</a>
   </div>
+  <div id="theme-notice" data-testid="theme-notice" hidden></div>
 
   <div id="status" data-testid="status">加载中…</div>
   <div id="meta" data-testid="meta"></div>

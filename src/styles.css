@@ -36,9 +36,22 @@ header p { margin: 6px 0 0; font-size: 13px; opacity: .65; letter-spacing: 1px; 
 #hint a { color: var(--gold); pointer-events: auto; }
 
 #hud { position: fixed; left: 22px; top: 78px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; z-index: 2; }
-.seed-field { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.18);
+.seed-field, .theme-field { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.18);
   border-radius: 10px; padding: 6px 10px; font-size: 13px; }
 .seed-field input { width: 96px; background: transparent; border: 0; color: #fff3d6; font: inherit; outline: none; }
+.theme-field select {
+  background: transparent; border: 0; color: #fff3d6; font: inherit; outline: none; cursor: pointer;
+  min-width: 7.5em;
+}
+.theme-field select option { color: #222; }
+#theme-notice {
+  position: fixed; left: 50%; top: 18px; transform: translateX(-50%); z-index: 6;
+  background: rgba(20,12,8,.82); border: 1px solid rgba(245,196,106,.45); border-radius: 10px;
+  padding: 8px 14px; font-size: 13px; letter-spacing: .5px; max-width: 80vw; text-align: center;
+}
+#theme-notice[hidden] { display: none; }
+body[data-theme="court-palace"] { --felt: #8b1e2d; --gold: #d4af37; }
+body[data-theme="classic-green"] { --felt: #0d5a3c; --gold: #f5c46a; }
 #start { cursor: pointer; border: 1px solid rgba(245,196,106,.55); color: #fff3d6; font: inherit; letter-spacing: 1px;
   padding: 9px 16px; border-radius: 10px; background: linear-gradient(180deg, rgba(40,70,50,.9), rgba(12,28,20,.95)); }
 #start:hover { border-color: var(--gold); }
@@ -146,7 +159,7 @@ header p { margin: 6px 0 0; font-size: 13px; opacity: .65; letter-spacing: 1px; 
 #banner .main { font-family: "STKaiti", "KaiTi", "Kaiti SC", "Noto Serif CJK SC", serif; font-weight: 900; line-height: 1; white-space: nowrap; }
 #banner-sub { margin-top: 8px; font-size: 15px; letter-spacing: 6px; opacity: .85; }
 #banner.show { animation: bannerIn 2.2s cubic-bezier(.2,.9,.25,1.2) var(--delay, 0s) both; }
-#banner.basic .main { font-size: 96px; color: #ffe2a0; text-shadow: 0 0 18px #ffb84a, 0 0 40px #c77a10; }
+#banner.basic .main { font-size: 96px; color: var(--banner-basic, #ffe2a0); text-shadow: 0 0 18px #ffb84a, 0 0 40px #c77a10; }
 #banner.big .main { font-size: 84px; letter-spacing: 10px; color: #fff0d0;
   text-shadow: 0 0 14px #ff5a30, 0 0 34px #d31a1a, 0 4px 0 #6a0a0a; }
 #banner.top { top: auto; bottom: 110px; }
