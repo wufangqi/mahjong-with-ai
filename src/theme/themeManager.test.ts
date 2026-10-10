@@ -84,7 +84,7 @@ describe('ThemeManager — appearance boundary', () => {
         fog: expect.any(Object),
         lights: expect.any(Object),
         ambientParticles: expect.any(Object),
-        tileBack: expect.any(Number),
+        tileBack: expect.objectContaining({ color: expect.any(Number), pattern: expect.any(String) }),
         palette: expect.any(Object),
       });
       const raw = JSON.stringify(theme);
@@ -99,7 +99,10 @@ describe('ThemeManager — appearance boundary', () => {
     expect(classicGreenTheme.modules.mark.glyph).toBe('雀');
     expect(courtPalaceTheme.modules.mark.glyph).toBe('福');
     expect(classicGreenTheme.modules.table.felt).not.toBe(courtPalaceTheme.modules.table.felt);
-    expect(classicGreenTheme.modules.tileBack).not.toBe(courtPalaceTheme.modules.tileBack);
+    expect(classicGreenTheme.modules.tileBack.pattern).toBe('solid');
+    expect(courtPalaceTheme.modules.tileBack.pattern).toBe('cloud');
+    expect(courtPalaceTheme.modules.ambientParticles.kind).toBe('petals');
+    expect(classicGreenTheme.modules.tileBack.color).not.toBe(courtPalaceTheme.modules.tileBack.color);
   });
 });
 

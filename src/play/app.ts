@@ -1,6 +1,6 @@
 import { FULL_SET_SIZE, PLAYER_SEAT, totalTileCount, type Seat } from '../core';
 import { PlaySession } from '../game/session';
-import { loadThemeSync } from '../theme/catalog';
+import { listThemeOptions, loadTheme } from '../theme/catalog';
 import { ThemeManager } from '../theme/themeManager';
 import { isThemeId } from '../theme/schema';
 import type { ThemeId } from '../theme/types';
@@ -79,10 +79,18 @@ export function bootPlayApp(): void {
     schedule: (fn, ms) => {
       window.setTimeout(fn, ms);
     },
-    loadTheme: loadThemeSync,
+    loadTheme,
   });
   let lastHandWonEventCount = 0;
   let sceneReleaseTimer: number | null = null;
+
+  themeSelect.replaceChildren();
+  for (const opt of listThemeOptions()) {
+    const el = document.createElement('option');
+    el.value = opt.id;
+    el.textContent = opt.displayName;
+    themeSelect.append(el);
+  }
 
   const showThemeNotices = (notices: string[]): void => {
     if (notices.length === 0) {
@@ -402,6 +410,8 @@ export function bootPlayApp(): void {
     themeNotices: () => themes.getNotices(),
     themeRefCount: (id: ThemeId) => themes.getRefCount(id),
     themeRetained: (id: ThemeId) => themes.isRetained(id),
+    ambientParticleKind: () => table.ambientParticleKind(),
+    tileBackPattern: () => table.tileBackPattern(),
   };
 
   void themes.start().then(() => {

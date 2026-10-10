@@ -25,7 +25,7 @@ export const courtPalaceTheme: ThemeDefinition = {
       keyIntensity: 1.4,
     },
     ambientParticles: { kind: 'petals', color: 0xff8a9a },
-    tileBack: 0x7a1528,
+    tileBack: { color: 0x7a1528, pattern: 'cloud' },
     palette: {
       bannerBasic: '#ffe8c0',
       bannerBig: '#ffd0a0',

@@ -115,8 +115,11 @@ export function validateModule(key: keyof ThemeModules, value: unknown): boolean
       const v = value as ThemeModules['ambientParticles'];
       return (v.kind === 'dust' || v.kind === 'petals') && isFiniteColor(v.color);
     }
-    case 'tileBack':
-      return isFiniteColor(value);
+    case 'tileBack': {
+      if (!value || typeof value !== 'object') return false;
+      const v = value as ThemeModules['tileBack'];
+      return isFiniteColor(v.color) && (v.pattern === 'solid' || v.pattern === 'cloud');
+    }
     case 'palette':
       return isPalette(value);
     default:

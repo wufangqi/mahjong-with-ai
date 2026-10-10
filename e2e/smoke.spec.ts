@@ -128,6 +128,19 @@ test('theme hot-switch persists, keeps mid-scene palette, and retains prior them
   expect(first.classicRefs).toBeGreaterThanOrEqual(1);
   await expect(page.locator('body')).toHaveAttribute('data-theme', 'court-palace');
 
+  const courtVisual = await page.evaluate(async () => {
+    // Allow transition frames to settle
+    await new Promise((r) => setTimeout(r, 500));
+    return {
+      particles: window.__play!.ambientParticleKind(),
+      tileBack: window.__play!.tileBackPattern(),
+      tileBackSpec: window.__play!.themeApplied().tileBack,
+    };
+  });
+  expect(courtVisual.particles).toBe('petals');
+  expect(courtVisual.tileBack).toBe('cloud');
+  expect(courtVisual.tileBackSpec.pattern).toBe('cloud');
+
   await page.evaluate(() => window.__play!.loadPinghuWinDemo());
   await page.getByTestId('claim-win').click();
   await expect(page.getByTestId('win-banner')).toHaveClass(/basic/);

@@ -17,7 +17,7 @@ export const classicGreenTheme: ThemeDefinition = {
       keyIntensity: 1.35,
     },
     ambientParticles: { kind: 'dust', color: 0xf5c46a },
-    tileBack: 0x0f7a4f,
+    tileBack: { color: 0x0f7a4f, pattern: 'solid' },
     palette: {
       bannerBasic: '#ffe2a0',
       bannerBig: '#fff0d0',

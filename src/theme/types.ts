@@ -54,7 +54,8 @@ export interface ThemeModules {
     keyIntensity: number;
   };
   ambientParticles: { kind: 'dust' | 'petals'; color: number };
-  tileBack: number;
+  /** Tile back fill; `cloud` draws procedural gold cloud pattern (court). */
+  tileBack: { color: number; pattern: 'solid' | 'cloud' };
   palette: ThemePalette;
 }
 

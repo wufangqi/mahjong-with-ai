@@ -1,4 +1,4 @@
-export { listThemes, loadThemeSync } from './catalog';
+export { listThemeOptions, loadTheme, type ThemeOption } from './catalog';
 export { ThemeManager, type ThemeManagerDeps, type ThemeStorage } from './themeManager';
 export { isThemeId, validateModules, validateThemeShape } from './schema';
 export {
@@ -15,4 +15,4 @@ export {
   type ThemeSelectResult,
 } from './types';
 export { classicGreenTheme } from './themes/classicGreen';
-export { courtPalaceTheme } from './themes/courtPalace';
+export { blendSkyColumn, sampleSkyRgb } from './skyBlend';

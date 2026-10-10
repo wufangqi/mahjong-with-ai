@@ -27,6 +27,8 @@ declare global {
       themeNotices: () => string[];
       themeRefCount: (id: ThemeId) => number;
       themeRetained: (id: ThemeId) => boolean;
+      ambientParticleKind: () => 'dust' | 'petals' | null;
+      tileBackPattern: () => 'solid' | 'cloud';
     };
   }
 }
