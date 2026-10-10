@@ -34,6 +34,24 @@ export function seatsAfter(discarder: Seat): Seat[] {
   return out;
 }
 
+/** Order winning seats from the discarder's next seat (一炮多响 domain order). */
+export function orderWinnerSeats(discarder: Seat, winners: readonly Seat[]): Seat[] {
+  if (winners.length <= 1) return [...winners];
+  const order = seatsAfter(discarder);
+  return order.filter((seat) => winners.includes(seat));
+}
+
+/**
+ * Next dealer after a win settlement: single winner, or nearest winner after
+ * the discarder when multiple seats won on the same discard.
+ */
+export function nextDealerAfterWin(winners: readonly Seat[], discarder: Seat): Seat {
+  if (winners.length === 0) throw new Error('no winners for next dealer');
+  if (winners.length === 1) return winners[0]!;
+  const ordered = orderWinnerSeats(discarder, winners);
+  return ordered[0] ?? winners[0]!;
+}
+
 function isNumberedSuit(code: TileCode): boolean {
   const suit = code[0];
   return (suit === 'm' || suit === 'p' || suit === 's') && code.length === 2;

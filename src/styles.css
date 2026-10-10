@@ -43,6 +43,7 @@ header p { margin: 6px 0 0; font-size: 13px; opacity: .65; letter-spacing: 1px; 
   background: transparent; border: 0; color: #fff3d6; font: inherit; outline: none; cursor: pointer;
   min-width: 7.5em;
 }
+.quality-field select { min-width: 4.5em; }
 .theme-field select option { color: #222; }
 #theme-notice {
   position: fixed; left: 50%; top: 18px; transform: translateX(-50%); z-index: 6;

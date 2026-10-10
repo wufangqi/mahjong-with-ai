@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>AI 爽胡麻将 · 主题热切换</title>
+<title>AI 爽胡麻将 · 三档画质</title>
 </head>
 <body class="play" data-theme="classic-green">
   <canvas id="c" data-testid="table-canvas"></canvas>
@@ -14,7 +14,7 @@
 
   <header>
     <h1>AI 爽胡麻将</h1>
-    <p>双主题热切换 · 吃碰 · 平胡</p>
+    <p>三档画质 · GPU 粒子兜底 · 双主题</p>
   </header>
 
   <div id="hud">
@@ -26,6 +26,15 @@
     <label class="theme-field">
       <span>主题</span>
       <select id="theme-select" data-testid="theme-select" aria-label="主题"></select>
+    </label>
+    <label class="theme-field quality-field">
+      <span>画质</span>
+      <select id="quality-select" data-testid="quality-select" aria-label="画质">
+        <option value="auto">自动</option>
+        <option value="low">低</option>
+        <option value="mid">中</option>
+        <option value="high">高</option>
+      </select>
     </label>
     <a class="preview-link" href="./preview.html">效果预览</a>
   </div>

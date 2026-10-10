@@ -1,4 +1,4 @@
-import type { FanPatternId, Seat, WinnerResult } from '../core';
+import { seatsAfter, type FanPatternId, type Seat, type WinnerResult } from '../core';
 
 /** Presentation-only scene tier (never appears on core HandWon). */
 export type SceneTier = 'basic' | 'big' | 'top';
@@ -60,6 +60,22 @@ export function planWinScene(winner: WinnerResult): WinScenePlan {
   };
 }
 
+/**
+ * Presentation order for 一炮多响: top → big → basic, then same-tier seats
+ * from the discarder's next seat.
+ */
+export function orderWinnersForScenes(
+  winners: readonly WinnerResult[],
+  discarder: Seat,
+): WinnerResult[] {
+  const seatOrder = seatsAfter(discarder);
+  return [...winners].sort((a, b) => {
+    const tierDiff = TIER_RANK[sceneTierForPatterns(b.patterns)] - TIER_RANK[sceneTierForPatterns(a.patterns)];
+    if (tierDiff !== 0) return tierDiff;
+    return seatOrder.indexOf(a.seat) - seatOrder.indexOf(b.seat);
+  });
+}
+
 export interface WinSceneSchedulerDeps {
   now: () => number;
   /** Schedule a callback after `delayMs` (injectable for tests). */
@@ -74,6 +90,7 @@ export class WinSceneScheduler {
   private readonly now: () => number;
   private readonly defer: (fn: () => void, delayMs: number) => void;
   private lastPlans: WinScenePlan[] = [];
+  private lastDiscarder: Seat = 0;
   private playHandler: ((plans: WinScenePlan[]) => void) | null = null;
   private lastScheduledAt: number | null = null;
 
@@ -87,8 +104,9 @@ export class WinSceneScheduler {
   }
 
   /** Enter scene scheduling for the given winners; must start within 100 ms. */
-  scheduleWinners(winners: readonly WinnerResult[]): void {
-    const plans = winners.map(planWinScene);
+  scheduleWinners(winners: readonly WinnerResult[], discarder: Seat): void {
+    this.lastDiscarder = discarder;
+    const plans = orderWinnersForScenes(winners, discarder).map(planWinScene);
     this.lastPlans = plans;
     const scheduledAt = this.now();
     this.lastScheduledAt = scheduledAt;
@@ -107,6 +125,7 @@ export class WinSceneScheduler {
         fan: plan.fan,
         hand: [],
       })),
+      this.lastDiscarder,
     );
   }
 

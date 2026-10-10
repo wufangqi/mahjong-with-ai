@@ -20,6 +20,8 @@ declare global {
       play: (name: EffectName) => void;
       ready: boolean;
       st: PreviewAppState;
+      particleBackend: () => 'gpu' | 'cpu';
+      gpuParticlesAvailable: () => boolean;
     };
     __visual?: {
       ready: boolean;

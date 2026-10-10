@@ -7,6 +7,7 @@ import { getPreparedVisualConfig } from '../visual/prepare';
 import { visualRandom } from '../visual/rng';
 import { TILE_W, TILE_H, TILE_D, GOLD, FONT_SERIF, createTile, setTileCode, tileGeometry, sideMat, backMat, setAnisotropy, frontMaterial } from './tiles';
 import { ParticlePool, makePillar, makeRipple, sampleGlyph, makePointsMaterial, pointUniforms, ease, clamp01, type FxMesh } from './fx';
+import { probeFromRenderer } from '../particles/probe';
 import { sfx, stopAll as stopAudio, setMuted, isMuted } from './audio';
 import { createHeavenCourt } from './court';
 import { FIXED_HANDS, type HandName } from './fixedHands';
@@ -170,7 +171,11 @@ composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
 // ---------------- 全局状态 ----------------
-const sparks = new ParticlePool(5000);
+const gpuProbe = probeFromRenderer(renderer);
+const sparks = new ParticlePool(5000, {
+  preferGpu: true,
+  gpuAvailable: gpuProbe.gpuParticlesAvailable,
+});
 scene.add(sparks.points);
 const st: {
   effect: Effect | null;
@@ -751,8 +756,13 @@ function seekToMs(ms: number): void {
   }
   composer.render();
 }
-
-window.__app = { play, st, ready: false };
+window.__app = {
+  play,
+  st,
+  ready: false,
+  particleBackend: () => sparks.backend,
+  gpuParticlesAvailable: () => gpuProbe.gpuParticlesAvailable,
+};
 window.__visual = {
   ready: false,
   config: visualCfg,

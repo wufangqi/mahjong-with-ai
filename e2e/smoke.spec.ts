@@ -188,4 +188,98 @@ test('effect preview still boots and plays fixed basic win', async ({ page }) =>
 
   const playing = await page.evaluate(() => Boolean(window.__app?.st && (window.__app.st as { effect: unknown }).effect));
   expect(playing).toBe(true);
+
+  const particles = await page.evaluate(() => ({
+    backend: window.__app!.particleBackend(),
+    gpuOk: window.__app!.gpuParticlesAvailable(),
+  }));
+  expect(['gpu', 'cpu']).toContain(particles.backend);
+  if (particles.gpuOk) expect(particles.backend).toBe('gpu');
+  else expect(particles.backend).toBe('cpu');
+});
+
+test('quality tiers control DPR/shadows/bloom/particles/sky and manual locks auto', async ({ page }) => {
+  await page.goto('./');
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+
+  await expect(page.getByTestId('quality-select')).toBeVisible();
+
+  const low = await page.evaluate(() => {
+    window.__play!.setQuality('low');
+    return window.__play!.qualitySettings();
+  });
+  expect(low.tier).toBe('low');
+  expect(low.dprCap).toBe(1);
+  expect(low.shadows).toBe('off');
+  expect(low.bloom).toBe('off');
+  expect(low.sky).toBe('simplified');
+  expect(low.preferGpuParticles).toBe(false);
+
+  const mid = await page.evaluate(() => {
+    window.__play!.setQuality('mid');
+    return window.__play!.qualitySettings();
+  });
+  expect(mid.dprCap).toBe(1.5);
+  expect(mid.shadowMapSize).toBe(1024);
+  expect(mid.bloom).toBe('full');
+  expect(mid.sky).toBe('full');
+
+  const high = await page.evaluate(() => {
+    window.__play!.setQuality('high');
+    return window.__play!.qualitySettings();
+  });
+  expect(high.dprCap).toBe(2);
+  expect(high.shadowMapSize).toBe(2048);
+  expect(high.particleBudget).toBeGreaterThan(mid.particleBudget);
+
+  await expect(page.getByTestId('quality-select')).toHaveValue('high');
+  expect(await page.evaluate(() => window.__play!.qualityMode())).toBe('manual');
+
+  await page.evaluate(() => {
+    window.__play!.beginQualityGame();
+    for (let i = 0; i < 60; i++) window.__play!.injectFpsSample(100, 20);
+  });
+  expect(await page.evaluate(() => window.__play!.qualityTier())).toBe('high');
+
+  await page.evaluate(async () => {
+    await window.__play!.selectTheme('court-palace');
+    await new Promise((r) => setTimeout(r, 500));
+  });
+  const ambient = await page.evaluate(() => ({
+    kind: window.__play!.ambientParticleKind(),
+    backend: window.__play!.ambientParticleBackend(),
+  }));
+  expect(ambient.kind).toBe('petals');
+  expect(['gpu', 'cpu']).toContain(ambient.backend);
+});
+
+test('auto quality downgrades one tier after sustained low fps', async ({ page }) => {
+  await page.goto('./');
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+
+  const result = await page.evaluate(() => {
+    window.__play!.pinAutoQuality('high');
+    window.__play!.beginQualityGame();
+    let changed: string | null = null;
+    for (let i = 0; i < 50; i++) {
+      changed = window.__play!.injectFpsSample(100, 20) ?? changed;
+    }
+    const afterDrop = window.__play!.qualityTier();
+    for (let i = 0; i < 100; i++) {
+      window.__play!.injectFpsSample(100, 60);
+    }
+    return {
+      mode: window.__play!.qualityMode(),
+      changed,
+      afterDrop,
+      afterHealthy: window.__play!.qualityTier(),
+      settings: window.__play!.qualitySettings(),
+    };
+  });
+
+  expect(result.mode).toBe('auto');
+  expect(result.changed).toBe('mid');
+  expect(result.afterDrop).toBe('mid');
+  expect(result.afterHealthy).toBe('mid');
+  expect(result.settings.dprCap).toBe(1.5);
 });
