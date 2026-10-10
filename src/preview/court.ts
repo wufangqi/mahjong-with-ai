@@ -1,5 +1,6 @@
 // 中国风天庭：云海、玉台、金柱、琉璃飞檐
 import * as THREE from 'three';
+import { visualRandom } from '../visual/rng';
 
 type DrawFn = (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
 
@@ -51,8 +52,8 @@ function cloudTexture(): THREE.CanvasTexture {
   return canvasTex(512, 512, (ctx) => {
     ctx.clearRect(0, 0, 512, 512);
     for (let i = 0; i < 28; i++) {
-      const x = 40 + Math.random() * 432, y = 40 + Math.random() * 432;
-      const r = 30 + Math.random() * 70;
+      const x = 40 + visualRandom() * 432, y = 40 + visualRandom() * 432;
+      const r = 30 + visualRandom() * 70;
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);
       g.addColorStop(0, 'rgba(255,252,248,0.55)');
       g.addColorStop(1, 'rgba(255,255,255,0)');
@@ -72,7 +73,7 @@ function jadeTexture(): THREE.CanvasTexture {
     ctx.fillRect(0, 0, S, S);
     const img = ctx.getImageData(0, 0, S, S), d = img.data;
     for (let i = 0; i < d.length; i += 16) {
-      const n = (Math.random() - 0.5) * 10;
+      const n = (visualRandom() - 0.5) * 10;
       d[i] += n; d[i + 1] += n; d[i + 2] += n;
     }
     ctx.putImageData(img, 0, 0);
@@ -128,8 +129,8 @@ export function createHeavenCourt(scene: THREE.Scene): HeavenCourt {
   const starN = 420;
   const starPos = new Float32Array(starN * 3);
   for (let i = 0; i < starN; i++) {
-    const th = Math.random() * Math.PI * 2;
-    const ph = Math.acos(0.15 + Math.random() * 0.85);
+    const th = visualRandom() * Math.PI * 2;
+    const ph = Math.acos(0.15 + visualRandom() * 0.85);
     const r = 78;
     starPos[i * 3] = r * Math.sin(ph) * Math.cos(th);
     starPos[i * 3 + 1] = r * Math.cos(ph);

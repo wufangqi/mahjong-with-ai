@@ -1,5 +1,7 @@
 // 特效基础组件：粒子池、光柱、涟漪、字形采样
 import * as THREE from 'three';
+import glyphHu from '../fonts/glyph-hu.json';
+import { visualRandom } from '../visual/rng';
 
 const pointsVS = /* glsl */ `
 attribute vec3 aColor;
@@ -237,30 +239,40 @@ export function makeRipple(color: THREE.ColorRepresentation, size = 14): FxMesh 
   return m;
 }
 
+/**
+ * Sample particle targets for a glyph silhouette.
+ * Top-tier 「胡」 uses the offline bitmap (`glyph-hu.json`) so CI / fontless hosts
+ * never depend on runtime system CJK fonts.
+ */
 export function sampleGlyph(text: string, count: number, font: string): Float32Array {
-  const S = 320;
-  const c = document.createElement('canvas');
-  c.width = S;
-  c.height = S;
-  const ctx = c.getContext('2d');
-  if (!ctx) throw new Error('2D canvas unavailable');
-  ctx.fillStyle = '#fff';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = `900 270px ${font}`;
-  ctx.fillText(text, S / 2, S / 2 + 8);
-  const data = ctx.getImageData(0, 0, S, S).data;
-  const pts: Array<[number, number]> = [];
-  for (let y = 0; y < S; y += 2)
-    for (let x = 0; x < S; x += 2) {
-      if (data[(y * S + x) * 4 + 3] > 120) pts.push([x / S - 0.5, 0.5 - y / S]);
-    }
+  let pts: Array<[number, number]>;
+  if (text === '胡') {
+    pts = glyphHu.points as Array<[number, number]>;
+  } else {
+    const S = 320;
+    const c = document.createElement('canvas');
+    c.width = S;
+    c.height = S;
+    const ctx = c.getContext('2d');
+    if (!ctx) throw new Error('2D canvas unavailable');
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `900 270px ${font}`;
+    ctx.fillText(text, S / 2, S / 2 + 8);
+    const data = ctx.getImageData(0, 0, S, S).data;
+    pts = [];
+    for (let y = 0; y < S; y += 2)
+      for (let x = 0; x < S; x += 2) {
+        if (data[(y * S + x) * 4 + 3] > 120) pts.push([x / S - 0.5, 0.5 - y / S]);
+      }
+  }
   if (!pts.length) pts.push([0, 0]);
   const out = new Float32Array(count * 2);
   for (let i = 0; i < count; i++) {
-    const p = pts[(Math.random() * pts.length) | 0];
-    out[i * 2] = p[0] + (Math.random() - 0.5) * 0.006;
-    out[i * 2 + 1] = p[1] + (Math.random() - 0.5) * 0.006;
+    const p = pts[(visualRandom() * pts.length) | 0]!;
+    out[i * 2] = p[0]! + (visualRandom() - 0.5) * 0.006;
+    out[i * 2 + 1] = p[1]! + (visualRandom() - 0.5) * 0.006;
   }
   return out;
 }

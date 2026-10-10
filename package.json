@@ -11,6 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:visual": "playwright test e2e/visual.spec.ts",
+    "test:visual:update": "node -e \"if(process.env.UPDATE_VISUAL_BASELINES!=='1'){console.error('Refusing baseline update without UPDATE_VISUAL_BASELINES=1 (human confirmation)');process.exit(1)}\" && playwright test e2e/visual.spec.ts --update-snapshots",
     "ci": "npm run typecheck && npm run test && npm run build && npm run test:e2e"
   },
   "dependencies": {

@@ -1,7 +1,7 @@
 :root { --gold: #f5c46a; --red: #e0353f; --felt: #0d5a3c; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #140a22; color: #f3e9d2;
-  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+  font-family: "Source Han Sans SC Game", sans-serif; }
 body.play { background: #0b1a14; }
 #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; transition: filter .25s ease; cursor: grab; touch-action: none; }
 body.play #c { cursor: default; }
@@ -156,7 +156,7 @@ body[data-theme="classic-green"] { --felt: #0d5a3c; --gold: #f5c46a; }
 #replay-scene:hover, #win-next-hand:hover { border-color: var(--gold); }
 
 #banner { position: fixed; left: 50%; top: 13%; transform: translateX(-50%); text-align: center; pointer-events: none; opacity: 0; z-index: 5; }
-#banner .main { font-family: "STKaiti", "KaiTi", "Kaiti SC", "Noto Serif CJK SC", serif; font-weight: 900; line-height: 1; white-space: nowrap; }
+#banner .main { font-family: "Source Han Serif SC Game", serif; font-weight: 900; line-height: 1; white-space: nowrap; }
 #banner-sub { margin-top: 8px; font-size: 15px; letter-spacing: 6px; opacity: .85; }
 #banner.show { animation: bannerIn 2.2s cubic-bezier(.2,.9,.25,1.2) var(--delay, 0s) both; }
 #banner.basic .main { font-size: 96px; color: var(--banner-basic, #ffe2a0); text-shadow: 0 0 18px #ffb84a, 0 0 40px #c77a10; }

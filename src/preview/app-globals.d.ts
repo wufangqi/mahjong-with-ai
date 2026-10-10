@@ -1,4 +1,5 @@
 import type { HandName } from './fixedHands';
+import type { VisualConfig, VisualTier } from '../visual/config';
 
 type EffectName = Exclude<HandName, 'idle'>;
 
@@ -19,6 +20,14 @@ declare global {
       play: (name: EffectName) => void;
       ready: boolean;
       st: PreviewAppState;
+    };
+    __visual?: {
+      ready: boolean;
+      config: VisualConfig | null;
+      sceneTimeMs: () => number;
+      seekToMs: (ms: number) => void;
+      playTier: (tier: VisualTier) => void;
+      captureDataUrl: () => string;
     };
   }
 }

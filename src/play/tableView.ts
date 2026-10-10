@@ -382,7 +382,7 @@ export class TableView {
     ctx.arc(128, 128, 84, 0, Math.PI * 2);
     ctx.stroke();
     ctx.fillStyle = ctx.strokeStyle;
-    ctx.font = 'bold 110px "STKaiti","KaiTi","Noto Serif CJK SC",serif';
+    ctx.font = 'bold 110px "Source Han Serif SC Game", serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(glyph, 128, 138);

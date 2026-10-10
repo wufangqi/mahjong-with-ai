@@ -1,16 +1,15 @@
 // 麻将牌：CanvasTexture 牌面 + 圆角立方体
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { FONT_SANS, FONT_SERIF } from '../fonts/families';
+import { areFontsReady } from '../fonts/loadFonts';
 import type { TileCode } from './fixedHands';
 
 export const TILE_W = 0.6,
   TILE_H = 0.8,
   TILE_D = 0.42;
 
-export const FONT_SANS =
-  '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Noto Sans SC","Source Han Sans SC","WenQuanYi Micro Hei",sans-serif';
-export const FONT_SERIF =
-  '"STKaiti","KaiTi","Kaiti SC","Noto Serif CJK SC","Source Han Serif SC","Songti SC","SimSun",serif';
+export { FONT_SANS, FONT_SERIF };
 
 const NUMS = ['一', '二', '三', '四', '五', '六', '七', '八', '九'] as const;
 const HONOR: Record<string, string> = { E: '东', S: '南', W: '西', N: '北', C: '中', F: '發' };
@@ -244,12 +243,24 @@ export function drawFace(
 }
 
 const texCache = new Map<TileCode, THREE.CanvasTexture>();
+const frontMats = new Map<TileCode, THREE.MeshStandardMaterial>();
 let maxAniso = 4;
 export function setAnisotropy(a: number): void {
   maxAniso = a;
 }
 
+/** Drop cached faces so they can be redrawn after bundled fonts finish loading. */
+export function clearFaceTextureCache(): void {
+  for (const tex of texCache.values()) tex.dispose();
+  texCache.clear();
+  for (const mat of frontMats.values()) mat.dispose();
+  frontMats.clear();
+}
+
 function faceTexture(code: TileCode): THREE.CanvasTexture {
+  if (!areFontsReady()) {
+    throw new Error('refuse to draw tile faces before bundled fonts are ready');
+  }
   const cached = texCache.get(code);
   if (cached) return cached;
   const W = 240,
@@ -352,7 +363,7 @@ export function setTileBackColor(hex: number): void {
 export function getTileBackPattern(): 'solid' | 'cloud' {
   return backPatternKind;
 }
-const frontMats = new Map<TileCode, THREE.MeshStandardMaterial>();
+
 export function frontMaterial(code: TileCode): THREE.MeshStandardMaterial {
   let mat = frontMats.get(code);
   if (!mat) {

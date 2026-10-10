@@ -4,6 +4,8 @@ coverage/
 test-results/
 playwright-report/
 blob-report/
+.tools-venv/
+tools/font-subset/tmp/
 .DS_Store
 *.log
 .env

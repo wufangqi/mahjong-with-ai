@@ -3,12 +3,19 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { getPreparedVisualConfig } from '../visual/prepare';
+import { visualRandom } from '../visual/rng';
 import { TILE_W, TILE_H, TILE_D, GOLD, FONT_SERIF, createTile, setTileCode, tileGeometry, sideMat, backMat, setAnisotropy, frontMaterial } from './tiles';
 import { ParticlePool, makePillar, makeRipple, sampleGlyph, makePointsMaterial, pointUniforms, ease, clamp01, type FxMesh } from './fx';
 import { sfx, stopAll as stopAudio, setMuted, isMuted } from './audio';
 import { createHeavenCourt } from './court';
 import { FIXED_HANDS, type HandName } from './fixedHands';
 import { timelineFor } from './timelines';
+
+const visualCfg = getPreparedVisualConfig();
+const VIEW_W = visualCfg?.enabled ? visualCfg.width : window.innerWidth;
+const VIEW_H = visualCfg?.enabled ? visualCfg.height : window.innerHeight;
+const VIEW_DPR = visualCfg?.enabled ? visualCfg.dpr : Math.min(window.devicePixelRatio, 2);
 
 function mustEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -18,9 +25,9 @@ function mustEl<T extends HTMLElement>(id: string): T {
 
 // ---------------- 渲染器 / 场景 ----------------
 const canvas = mustEl<HTMLCanvasElement>('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: !!visualCfg?.enabled });
+renderer.setPixelRatio(VIEW_DPR);
+renderer.setSize(VIEW_W, VIEW_H);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
@@ -31,14 +38,14 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a1028);
 scene.fog = new THREE.Fog(0xe8c8aa, 38, 110);
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.08, 160);
+const camera = new THREE.PerspectiveCamera(60, VIEW_W / VIEW_H, 0.08, 160);
 // 站在斗兽场看台缺口外，拉远后能看见整圈看台和手牌
 const EYE = new THREE.Vector3(0, 4.7, 18.8);
 const CAM_TARGET = new THREE.Vector3(0, 0.55, 0.2);
 const camBase = new THREE.Vector3();
 const look: { yaw: number; pitch: number } = { yaw: 0, pitch: 0 };
 function updateCamBase() {
-  const aspect = window.innerWidth / window.innerHeight;
+  const aspect = (visualCfg?.enabled ? VIEW_W : window.innerWidth) / (visualCfg?.enabled ? VIEW_H : window.innerHeight);
   camera.fov = aspect < 0.85 ? 72 : 60;
   camera.updateProjectionMatrix();
   camBase.copy(EYE);
@@ -71,7 +78,7 @@ function feltTexture(): THREE.CanvasTexture {
   g.addColorStop(0, '#13684a'); g.addColorStop(0.6, '#0b4a34'); g.addColorStop(1, '#062a1e');
   ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
   const img = ctx.getImageData(0, 0, S, S), d = img.data;
-  for (let i = 0; i < d.length; i += 4) { const n = (Math.random() - 0.5) * 18; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  for (let i = 0; i < d.length; i += 4) { const n = (visualRandom() - 0.5) * 18; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
   ctx.putImageData(img, 0, 0);
   // 中央装饰金圈
   ctx.strokeStyle = 'rgba(214,176,96,.35)'; ctx.lineWidth = 3;
@@ -89,9 +96,9 @@ function woodTexture(): THREE.CanvasTexture {
   if (!ctx) throw new Error('2D canvas unavailable');
   ctx.fillStyle = '#3a1d0e'; ctx.fillRect(0, 0, 512, 64);
   for (let i = 0; i < 70; i++) {
-    ctx.strokeStyle = `rgba(${20 + Math.random() * 40},${8 + Math.random() * 14},4,${0.25 + Math.random() * 0.3})`;
-    ctx.lineWidth = 1 + Math.random() * 2; ctx.beginPath();
-    const y = Math.random() * 64; ctx.moveTo(0, y);
+    ctx.strokeStyle = `rgba(${20 + visualRandom() * 40},${8 + visualRandom() * 14},4,${0.25 + visualRandom() * 0.3})`;
+    ctx.lineWidth = 1 + visualRandom() * 2; ctx.beginPath();
+    const y = visualRandom() * 64; ctx.moveTo(0, y);
     for (let x = 0; x <= 512; x += 32) ctx.lineTo(x, y + Math.sin(x * 0.02 + i) * 3);
     ctx.stroke();
   }
@@ -158,7 +165,7 @@ function setHand(name: HandName): void { HANDS[name].forEach((c, i) => setTileCo
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const BLOOM_BASE = 0.35;
-const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), BLOOM_BASE, 0.55, 0.92);
+const bloom = new UnrealBloomPass(new THREE.Vector2(VIEW_W, VIEW_H), BLOOM_BASE, 0.55, 0.92);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
@@ -242,7 +249,7 @@ class Effect {
 }
 
 const GLYPH_POS = new THREE.Vector3(0, 2.05, 2.1);
-const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+const rnd = (a: number, b: number) => a + visualRandom() * (b - a);
 const _v = new THREE.Vector3();
 
 // ===== 1. 基础胡：牌弹起 + 金边闪光 + 闪粉 =====
@@ -275,12 +282,12 @@ class BasicWin extends Effect {
       for (const tile of tiles) for (let k = 0; k < 14; k++) {
         const p = tile.group.position;
         sparks.emit({ x: p.x + rnd(-0.3, 0.3), y: p.y + rnd(0.2, 0.5), z: p.z + rnd(-0.2, 0.2), vx: rnd(-1.2, 1.2), vy: rnd(1.5, 4), vz: rnd(-1, 1),
-          color: Math.random() < 0.7 ? [3, 2, 0.6] : [3, 3, 3], size: rnd(0.08, 0.2), life: rnd(0.6, 1.3), gravity: -4, drag: 1.8, twinkle: 1 });
+          color: visualRandom() < 0.7 ? [3, 2, 0.6] : [3, 3, 3], size: rnd(0.08, 0.2), life: rnd(0.6, 1.3), gravity: -4, drag: 1.8, twinkle: 1 });
       }
     }
     if (t > 0.2 && t < 1.3) {
       for (let k = 0; k < 4; k++) {
-        const tile = tiles[(Math.random() * 14) | 0], p = tile.group.position;
+        const tile = tiles[(visualRandom() * 14) | 0], p = tile.group.position;
         sparks.emit({ x: p.x + rnd(-0.32, 0.32), y: p.y + rnd(-0.3, 0.45), z: p.z + rnd(0.1, 0.3), vx: rnd(-0.2, 0.2), vy: rnd(0.3, 1), vz: rnd(-0.1, 0.2),
           color: [2.6, 1.8, 0.6], size: rnd(0.06, 0.14), life: rnd(0.4, 0.9), gravity: 0, drag: 0.5, twinkle: 1 });
       }
@@ -349,7 +356,7 @@ class BigWin extends Effect {
       for (let k = 0; k < 260; k++) {
         const a = rnd(0, Math.PI * 2), s = rnd(2, 6);
         sparks.emit({ x: Math.cos(a) * 0.5, y: 0.1, z: Math.sin(a) * 0.5, vx: Math.cos(a) * s, vy: rnd(0.5, 3), vz: Math.sin(a) * s,
-          color: Math.random() < 0.5 ? [3, 1.4, 0.3] : [3, 2.4, 1], size: rnd(0.08, 0.22), life: rnd(0.5, 1.2), gravity: -5, drag: 2.2, twinkle: 0 });
+          color: visualRandom() < 0.5 ? [3, 1.4, 0.3] : [3, 2.4, 1], size: rnd(0.08, 0.22), life: rnd(0.5, 1.2), gravity: -5, drag: 2.2, twinkle: 0 });
       }
     }
     // 沿光柱螺旋上升的粒子
@@ -357,7 +364,7 @@ class BigWin extends Effect {
       for (let k = 0; k < 10; k++) {
         const a = rnd(0, Math.PI * 2), r = rnd(0.6, 1.6);
         sparks.emit({ x: Math.cos(a) * r, y: rnd(0, 1.5), z: Math.sin(a) * r, vx: -Math.sin(a) * 2.5 - Math.cos(a) * 0.4, vy: rnd(2, 5), vz: Math.cos(a) * 2.5 - Math.sin(a) * 0.4,
-          color: Math.random() < 0.6 ? [3, 1.5, 0.35] : [2.5, 0.5, 0.3], size: rnd(0.07, 0.18), life: rnd(0.8, 1.6), gravity: 1.5, drag: 0.6, twinkle: 1 });
+          color: visualRandom() < 0.6 ? [3, 1.5, 0.35] : [2.5, 0.5, 0.3], size: rnd(0.07, 0.18), life: rnd(0.8, 1.6), gravity: 1.5, drag: 0.6, twinkle: 1 });
       }
     }
     // 镜头：先拉远，冲击时推近，再回位
@@ -420,11 +427,11 @@ class TopWin extends Effect {
     this.baseCol = new Float32Array(this.N * 3);
     this.baseSize = new Float32Array(this.N);
     for (let i = 0; i < this.N; i++) {
-      const r = Math.random();
+      const r = visualRandom();
       const c = r < 0.62 ? [1.0, 0.62, 0.2] : r < 0.85 ? [1.15, 0.2, 0.1] : [1.0, 1.0, 1.0];
       this.baseCol.set(c, i * 3);
       this.size[i] = this.baseSize[i] = rnd(0.08, 0.17);
-      this.phase[i] = Math.random() * Math.PI * 2;
+      this.phase[i] = visualRandom() * Math.PI * 2;
     }
     const mk = (a: Float32Array, n: number) => new THREE.BufferAttribute(a, n).setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('position', mk(this.pos, 3));
@@ -489,9 +496,9 @@ class TopWin extends Effect {
       for (const code of new Set(HANDS.top)) frontMaterial(code).emissiveIntensity = ease.inCubic(t) * 0.9;
       if (t < 0.12) {
         for (let k = 0; k < 30; k++) {
-          const tile = tiles[(Math.random() * 14) | 0], p = tile.group.position;
+          const tile = tiles[(visualRandom() * 14) | 0], p = tile.group.position;
           sparks.emit({ x: p.x + rnd(-0.4, 0.4), y: p.y + rnd(-0.4, 0.6), z: p.z + rnd(-0.4, 0.4), vx: rnd(-2, 2), vy: rnd(0, 3), vz: rnd(-2, 2),
-            color: Math.random() < 0.5 ? [3, 2.2, 0.8] : [2, 2.4, 3.2], size: rnd(0.05, 0.14), life: rnd(2.5, 4), gravity: -1, drag: 0.8, twinkle: 1 });
+            color: visualRandom() < 0.5 ? [3, 2.2, 0.8] : [2, 2.4, 3.2], size: rnd(0.05, 0.14), life: rnd(2.5, 4), gravity: -1, drag: 0.8, twinkle: 1 });
         }
       }
       st.dolly = -1.2 * ease.outCubic(t);
@@ -549,7 +556,7 @@ class TopWin extends Effect {
             const a = rnd(0, Math.PI * 2), s = rnd(4, 10);
             _v.set(Math.cos(a), Math.sin(a), 0).transformDirection(this.anchor.matrixWorld);
             sparks.emit({ x: this.anchor.position.x, y: this.anchor.position.y, z: this.anchor.position.z, vx: _v.x * s, vy: _v.y * s, vz: _v.z * s,
-              color: Math.random() < 0.6 ? [3.2, 2.2, 0.7] : [3.2, 0.6, 0.3], size: rnd(0.1, 0.26), life: rnd(0.6, 1.4), gravity: -2, drag: 1.6, twinkle: 1 });
+              color: visualRandom() < 0.6 ? [3.2, 2.2, 0.7] : [3.2, 0.6, 0.3], size: rnd(0.1, 0.26), life: rnd(0.6, 1.4), gravity: -2, drag: 1.6, twinkle: 1 });
           }
         }
         const h = tau - CONV_END;
@@ -641,6 +648,7 @@ function ambientDust(dt: number): void {
 
 // ---------------- 主循环 ----------------
 function onResize(): void {
+  if (visualCfg?.enabled) return;
   const w = window.innerWidth, h = window.innerHeight;
   camera.aspect = w / h; camera.updateProjectionMatrix();
   renderer.setSize(w, h); composer.setSize(w, h);
@@ -678,23 +686,26 @@ const camDir = new THREE.Vector3();
 const _fwd = new THREE.Vector3();
 const _lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 let elapsed = 0;
-function frame(): void {
-  requestAnimationFrame(frame);
-  const dt = Math.min(clock.getDelta(), 1 / 30);
-  elapsed += dt;
+/** Scene-local clock in seconds (visual harness drives this with fixed steps). */
+let sceneTime = 0;
+
+function simulate(dt: number, opts: { render: boolean }): void {
+  sceneTime += dt;
+  elapsed = sceneTime;
   if (st.effect) {
     st.effect.update(dt);
     if (st.effect.done) resetAll();
   }
-  ambientDust(dt * st.timeScale);
+  if (!visualCfg?.enabled) ambientDust(dt * st.timeScale);
   sparks.update(dt * st.timeScale);
   court.update(dt);
 
-  // 第一人称：眼位 + 鼠标/方向键环顾；特效仍沿视线做推拉和震屏
-  if (keys.has('ArrowLeft')) look.yaw += dt * 0.9;
-  if (keys.has('ArrowRight')) look.yaw -= dt * 0.9;
-  if (keys.has('ArrowUp')) look.pitch += dt * 0.7;
-  if (keys.has('ArrowDown')) look.pitch -= dt * 0.7;
+  if (!visualCfg?.enabled) {
+    if (keys.has('ArrowLeft')) look.yaw += dt * 0.9;
+    if (keys.has('ArrowRight')) look.yaw -= dt * 0.9;
+    if (keys.has('ArrowUp')) look.pitch += dt * 0.7;
+    if (keys.has('ArrowDown')) look.pitch -= dt * 0.7;
+  }
   look.yaw = THREE.MathUtils.clamp(look.yaw, -1.15, 1.15);
   look.pitch = THREE.MathUtils.clamp(look.pitch, -0.62, 0.42);
 
@@ -708,10 +719,10 @@ function frame(): void {
   _fwd.applyEuler(_lookEuler);
   const target = _v.copy(camera.position).add(_fwd);
   if (st.shake > 0.001) {
-    camera.position.x += (Math.random() - 0.5) * st.shake;
-    camera.position.y += (Math.random() - 0.5) * st.shake;
-    target.x += (Math.random() - 0.5) * st.shake * 0.4;
-    target.y += (Math.random() - 0.5) * st.shake * 0.4;
+    camera.position.x += (visualRandom() - 0.5) * st.shake;
+    camera.position.y += (visualRandom() - 0.5) * st.shake;
+    target.x += (visualRandom() - 0.5) * st.shake * 0.4;
+    target.y += (visualRandom() - 0.5) * st.shake * 0.4;
     st.shake *= Math.exp(-dt * 5);
   }
   camera.lookAt(target);
@@ -721,8 +732,53 @@ function frame(): void {
   ui.flash.style.opacity = st.flash.toFixed(3);
   st.flash *= Math.exp(-dt * 5);
 
+  if (opts.render) composer.render();
+}
+
+function frame(): void {
+  requestAnimationFrame(frame);
+  const dt = Math.min(clock.getDelta(), 1 / 30);
+  simulate(dt, { render: true });
+}
+
+function seekToMs(ms: number): void {
+  const step = (visualCfg?.stepMs ?? 1000 / 60) / 1000;
+  const target = ms / 1000;
+  // Simulate without per-step GPU presents — one final render at the capture point.
+  while (sceneTime + 1e-9 < target) {
+    const dt = Math.min(step, target - sceneTime);
+    simulate(dt, { render: false });
+  }
   composer.render();
 }
-frame();
-window.__app = { play, st, ready: true };
-document.body.classList.add('ready');
+
+window.__app = { play, st, ready: false };
+window.__visual = {
+  ready: false,
+  config: visualCfg,
+  sceneTimeMs: () => sceneTime * 1000,
+  seekToMs,
+  playTier: (tier) => {
+    play(tier);
+  },
+  captureDataUrl: () => canvas.toDataURL('image/png'),
+};
+
+if (visualCfg?.enabled) {
+  setMuted(true);
+  look.yaw = 0;
+  look.pitch = 0;
+  pointUniforms.uScale.value = VIEW_H * VIEW_DPR * 0.5;
+  composer.setSize(VIEW_W, VIEW_H);
+  play(visualCfg.tier);
+  seekToMs(visualCfg.captureAt);
+  window.__app.ready = true;
+  window.__visual.ready = true;
+  document.body.classList.add('ready');
+  document.body.dataset.captureReady = '1';
+} else {
+  frame();
+  window.__app.ready = true;
+  window.__visual.ready = true;
+  document.body.classList.add('ready');
+}
