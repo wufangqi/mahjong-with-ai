@@ -125,10 +125,35 @@ function isStandardWin(codes: readonly TileCode[]): boolean {
   return false;
 }
 
+/** Whitelist fan ids recognized by the core (ADR-0002). */
+export type FanPatternId = 'pinghu' | 'qidui' | 'shisanyao';
+
+export interface WinEvaluation {
+  patterns: FanPatternId[];
+  fan: number;
+}
+
+/**
+ * Score a completed 14-tile hand. 平胡 only applies when no other listed
+ * pattern matches (spec: 平胡 exclusion).
+ */
+export function evaluateWin(codes: readonly TileCode[]): WinEvaluation {
+  if (codes.length !== 14) return { patterns: [], fan: 0 };
+
+  const patterns: FanPatternId[] = [];
+  if (isSevenPairs(codes)) patterns.push('qidui');
+  if (isThirteenOrphans(codes)) patterns.push('shisanyao');
+
+  if (patterns.length === 0 && isStandardWin(codes)) {
+    patterns.push('pinghu');
+  }
+
+  return { patterns, fan: patterns.length };
+}
+
 /** True when 14 face codes form a recognized winning hand under 爽胡规则. */
 export function isWinningCodes(codes: readonly TileCode[]): boolean {
-  if (codes.length !== 14) return false;
-  return isSevenPairs(codes) || isThirteenOrphans(codes) || isStandardWin(codes);
+  return evaluateWin(codes).patterns.length > 0;
 }
 
 /**

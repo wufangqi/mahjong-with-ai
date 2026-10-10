@@ -81,4 +81,35 @@ describe('PlaySession', () => {
       b.snapshot().state!.seats.map((s) => s.river.map((t) => t.id)),
     );
   });
+
+  it('loads a 平胡 response demo, claims win, and settles with 1 fan', () => {
+    const session = new PlaySession();
+    session.loadPinghuWinDemo();
+    expect(session.snapshot().status).toBe('awaiting_player_win_response');
+    expect(session.snapshot().playerCanWin).toBe(true);
+
+    session.claimWin();
+    const snap = session.snapshot();
+    expect(snap.status).toBe('hand_won');
+    expect(snap.winSettlement?.winners).toEqual([
+      expect.objectContaining({ seat: 0, patterns: ['pinghu'], fan: 1 }),
+    ]);
+    expect(snap.events.some((e) => e.type === 'HandWon')).toBe(true);
+
+    const winnerSeat = snap.winSettlement!.winners[0]!.seat;
+    session.startNextHand(5302);
+    expect(session.snapshot().state!.dealer).toBe(winnerSeat);
+  });
+
+  it('lets the player pass a 平胡 opportunity without ending the hand', () => {
+    const session = new PlaySession();
+    session.loadPinghuWinDemo();
+    session.passWin();
+    const snap = session.snapshot();
+    expect(snap.status).not.toBe('hand_won');
+    expect(snap.winSettlement).toBeNull();
+    expect(['awaiting_player_discard', 'awaiting_player_win_response', 'exhaustive_draw']).toContain(
+      snap.status,
+    );
+  });
 });

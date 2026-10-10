@@ -15,8 +15,10 @@ import type {
   HandState,
   Seat,
   SeatState,
+  WinnerResult,
+  WinSettlement,
 } from './types';
-import { isWinningCodes, waitingTileCodes } from './winning';
+import { evaluateWin, isWinningCodes, waitingTileCodes } from './winning';
 
 export const PLAYER_SEAT: Seat = 0;
 
@@ -29,6 +31,17 @@ function cloneSeat(seat: SeatState): SeatState {
     hand: [...seat.hand],
     drawn: seat.drawn,
     river: [...seat.river],
+  };
+}
+
+function cloneWinner(w: WinnerResult): WinnerResult {
+  return { ...w, patterns: [...w.patterns], hand: [...w.hand] };
+}
+
+function cloneWinSettlement(s: WinSettlement): WinSettlement {
+  return {
+    ...s,
+    winners: s.winners.map(cloneWinner),
   };
 }
 
@@ -60,6 +73,7 @@ function cloneState(state: HandState): HandState {
           fanBySeat: { ...state.settlement.fanBySeat },
         }
       : null,
+    winSettlement: state.winSettlement ? cloneWinSettlement(state.winSettlement) : null,
   };
 }
 
@@ -119,6 +133,24 @@ export function canWinOnDiscard(state: HandState, seat: Seat, tileCode: TileCode
   return isWinningCodes([...handCodes(seatState), tileCode]);
 }
 
+function anySeatCanWin(state: HandState, discarder: Seat, tileCode: TileCode): boolean {
+  return otherSeats(discarder).some((seat) => canWinOnDiscard(state, seat, tileCode));
+}
+
+function buildWinnerResult(state: HandState, seat: Seat, winningTile: PhysicalTile): WinnerResult {
+  const hand = sortHand([...state.seats[seat].hand, winningTile]);
+  const evaluation = evaluateWin(hand.map((t) => t.code));
+  if (evaluation.patterns.length === 0) {
+    throw new Error(`seat ${seat} claimed win without a matching pattern`);
+  }
+  return {
+    seat,
+    patterns: evaluation.patterns,
+    fan: evaluation.fan,
+    hand,
+  };
+}
+
 export function buildExhaustiveDrawSettlement(state: HandState): ExhaustiveDrawSettlement {
   const seats = ([0, 1, 2, 3] as Seat[]).map((seat) => {
     const hand = sortHand([...state.seats[seat].hand]);
@@ -172,6 +204,7 @@ function startHand(seed: number, forcedDealer?: Seat): CommandResult {
     seats,
     responseWindow: null,
     settlement: null,
+    winSettlement: null,
   };
 
   drawFromWall(state, dealer);
@@ -237,8 +270,11 @@ function discard(state: HandState, seat: Seat, tileId: string): CommandResult {
 
   const events: DomainEvent[] = [{ type: 'TileDiscarded', seat, tile: discarded }];
 
-  if (state.wall.length === 0) {
-    // Last normal draw was already taken; only win responses remain.
+  const wallEmpty = state.wall.length === 0;
+  const claimable = anySeatCanWin(state, seat, discarded.code);
+
+  if (wallEmpty || claimable) {
+    // Final discard: win-only window. Mid-hand: open when someone can 胡.
     state.phase = 'awaiting_win_response';
     state.responseWindow = {
       discarder: seat,
@@ -262,23 +298,42 @@ function finishResponseWindow(state: HandState): DomainEvent[] {
   if (window.pending.length > 0) return [];
 
   if (window.winners.length > 0) {
-    state.phase = 'hand_won';
-    state.settlement = null;
-    const event: DomainEvent = {
-      type: 'HandWon',
-      winners: [...window.winners],
+    const winners = window.winners.map((seat) => buildWinnerResult(state, seat, window.tile));
+    const winSettlement: WinSettlement = {
+      winners,
       discarder: window.discarder,
       tile: window.tile,
+      winKind: 'discard',
+    };
+    state.phase = 'hand_won';
+    state.settlement = null;
+    state.winSettlement = winSettlement;
+    const event: DomainEvent = {
+      type: 'HandWon',
+      winners,
+      discarder: window.discarder,
+      tile: window.tile,
+      winKind: 'discard',
     };
     state.responseWindow = null;
     return [event];
   }
 
-  const settlement = buildExhaustiveDrawSettlement(state);
-  state.phase = 'exhaustive_draw';
-  state.settlement = settlement;
+  // All passed: final discard → 流局; otherwise only this opportunity is spent.
+  if (state.wall.length === 0) {
+    const settlement = buildExhaustiveDrawSettlement(state);
+    state.phase = 'exhaustive_draw';
+    state.settlement = settlement;
+    state.winSettlement = null;
+    state.responseWindow = null;
+    return [{ type: 'ExhaustiveDraw', settlement }];
+  }
+
+  state.phase = 'awaiting_discard';
+  state.turn = nextSeat(window.discarder);
   state.responseWindow = null;
-  return [{ type: 'ExhaustiveDraw', settlement }];
+  state.winSettlement = null;
+  return [];
 }
 
 function claimWin(state: HandState, seat: Seat): CommandResult {

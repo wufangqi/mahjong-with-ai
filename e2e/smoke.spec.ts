@@ -69,6 +69,29 @@ test('auto-play reaches 流局 settlement with revealed hands', async ({ page })
   expect(dealerAfter).toBe(dealerBefore);
 });
 
+test('平胡 claim plays basic scene and shows settlement with replay', async ({ page }) => {
+  await page.goto('./');
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+
+  await page.evaluate(() => window.__play!.loadPinghuWinDemo());
+  await expect(page.getByTestId('response-bar')).toBeVisible();
+  await expect(page.getByTestId('claim-win')).toBeVisible();
+
+  await page.getByTestId('claim-win').click();
+
+  await expect(page.getByTestId('win-panel')).toBeVisible();
+  await expect(page.getByTestId('win-summary')).toContainText('平胡');
+  await expect(page.getByTestId('win-summary')).toContainText('1 番');
+  await expect(page.getByTestId('status')).toContainText('平胡');
+
+  const plans = await page.evaluate(() => window.__play!.lastScenePlans());
+  expect(plans[0]?.tier).toBe('basic');
+  await expect(page.getByTestId('win-banner')).toHaveClass(/basic/);
+
+  await page.getByTestId('replay-scene').click();
+  await expect(page.getByTestId('win-banner')).toHaveClass(/basic/);
+});
+
 test('effect preview still boots and plays fixed basic win', async ({ page }) => {
   await page.goto('./preview.html');
   await expect(page.locator('header h1')).toHaveText('AI 爽胡麻将');

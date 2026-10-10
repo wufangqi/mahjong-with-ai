@@ -1,4 +1,5 @@
 import type { PlaySessionSnapshot } from '../game/session';
+import type { WinScenePlan } from './winPresentation';
 
 declare global {
   interface Window {
@@ -12,6 +13,9 @@ declare global {
       claimWin: () => void;
       passWin: () => void;
       startNextHand: (seed: number) => void;
+      loadPinghuWinDemo: () => void;
+      replayScene: () => void;
+      lastScenePlans: () => WinScenePlan[];
     };
   }
 }
