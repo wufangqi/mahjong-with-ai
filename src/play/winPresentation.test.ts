@@ -18,13 +18,20 @@ describe('sceneTierForPatterns', () => {
     expect(sceneTierForPatterns(['pinghu'])).toBe('basic');
   });
 
-  it('maps 七对 to big and 十三幺 to top', () => {
+  it('maps 碰碰胡、清一色、七对、杠上开花 to big and 十三幺 to top', () => {
+    expect(sceneTierForPatterns(['pengpenghu'])).toBe('big');
+    expect(sceneTierForPatterns(['qingyise'])).toBe('big');
     expect(sceneTierForPatterns(['qidui'])).toBe('big');
+    expect(sceneTierForPatterns(['gangshangkaihua'])).toBe('big');
     expect(sceneTierForPatterns(['shisanyao'])).toBe('top');
   });
 
-  it('maps 杠上开花 to big', () => {
-    expect(sceneTierForPatterns(['gangshangkaihua'])).toBe('big');
+  it('picks the highest matched pattern tier, not total fan', () => {
+    // 2 fan of big patterns stay big — fan count never promotes to top
+    expect(sceneTierForPatterns(['qingyise', 'gangshangkaihua'])).toBe('big');
+    expect(sceneTierForPatterns(['pengpenghu', 'qingyise'])).toBe('big');
+    // A top pattern still wins over stacked big fans
+    expect(sceneTierForPatterns(['qingyise', 'pengpenghu', 'shisanyao'])).toBe('top');
   });
 });
 
@@ -34,6 +41,17 @@ describe('planWinScene', () => {
     expect(plan.tier).toBe('basic');
     expect(plan.bannerSub).toBe('平胡 · 1 番');
     expect(plan.patterns).toEqual(['pinghu']);
+  });
+
+  it('labels stacked 清一色 + 碰碰胡 and keeps big tier', () => {
+    const plan = planWinScene({
+      seat: 0,
+      patterns: ['pengpenghu', 'qingyise'],
+      fan: 2,
+      hand: [],
+    });
+    expect(plan.tier).toBe('big');
+    expect(plan.bannerSub).toBe('碰碰胡 · 2 番');
   });
 });
 

@@ -192,6 +192,10 @@ function buildWinnerResult(
   const hand = sortHand([...seatState.hand, winningTile]);
   const evaluation = evaluateWin(hand.map((t) => t.code), seatState.melds.length, {
     gangShangKaiHua,
+    melds: seatState.melds.map((meld) => ({
+      kind: meld.kind,
+      codes: meld.tiles.map((tile) => tile.code),
+    })),
   });
   if (evaluation.patterns.length === 0) {
     throw new Error(`seat ${seat} claimed win without a matching pattern`);

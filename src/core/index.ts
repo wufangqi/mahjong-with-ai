@@ -55,6 +55,8 @@ export {
   isWinningCodes,
   isWinningHand,
   waitingTileCodes,
+  type EvaluateWinOptions,
   type FanPatternId,
+  type MeldForWin,
   type WinEvaluation,
 } from './winning';

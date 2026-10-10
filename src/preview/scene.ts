@@ -8,6 +8,7 @@ import { ParticlePool, makePillar, makeRipple, sampleGlyph, makePointsMaterial, 
 import { sfx, stopAll as stopAudio, setMuted, isMuted } from './audio';
 import { createHeavenCourt } from './court';
 import { FIXED_HANDS, type HandName } from './fixedHands';
+import { timelineFor } from './timelines';
 
 function mustEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -248,8 +249,10 @@ const _v = new THREE.Vector3();
 class BasicWin extends Effect {
   burst = false;
   constructor() {
-    super(2.6);
-    showBanner('胡', '平胡 · 基础胡', 'basic', 0.2);
+    const cfg = timelineFor('basic');
+    const banner = cfg.tracks.find((t) => t.kind === 'banner');
+    super(cfg.durationMs / 1000);
+    showBanner(cfg.bannerMain, cfg.bannerSub, 'basic', (banner?.startMs ?? 0) / 1000);
     sfx.basic();
   }
   update(dt: number): void {
@@ -294,14 +297,16 @@ class BigWin extends Effect {
   ripple: FxMesh;
   impact = false;
   constructor() {
-    super(3.8);
+    const cfg = timelineFor('big');
+    const banner = cfg.tracks.find((t) => t.kind === 'banner');
+    super(cfg.durationMs / 1000);
     this.pillar = makePillar(new THREE.Color(1.0, 0.55, 0.15), 1.0);
     this.core = makePillar(new THREE.Color(1.6, 1.4, 1.0), 0.38);
     this.pillar.scale.y = this.core.scale.y = 0.001;
     this.ripple = makeRipple(new THREE.Color(1.5, 0.85, 0.25), 15);
     this.ripple.position.y = 0.01;
     this.group.add(this.pillar, this.core, this.ripple);
-    showBanner('清一色', '大牌胡 · 番数翻倍', 'big', 0.9);
+    showBanner(cfg.bannerMain, cfg.bannerSub, 'big', (banner?.startMs ?? 0) / 1000);
     sfx.big();
   }
   ringPos(i: number, t: number, out: THREE.Vector3): number {
@@ -387,7 +392,9 @@ class TopWin extends Effect {
   backdrop!: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   anchor!: THREE.Object3D;
   constructor() {
-    super(4.6);
+    const cfg = timelineFor('top');
+    const banner = cfg.tracks.find((t) => t.kind === 'banner');
+    super(cfg.durationMs / 1000);
     // 「胡」字目标位置：悬浮于桌面中央并朝向镜头
     const anchor = new THREE.Object3D();
     anchor.position.copy(GLYPH_POS);
@@ -446,7 +453,7 @@ class TopWin extends Effect {
 
     ui.vignette.classList.add('on');
     canvas.classList.add('slowmo');
-    showBanner('国士无双', '役满 · 顶级胡', 'top', 2.45);
+    showBanner(cfg.bannerMain, cfg.bannerSub, 'top', (banner?.startMs ?? 0) / 1000);
     sfx.top();
   }
   explode(): void {

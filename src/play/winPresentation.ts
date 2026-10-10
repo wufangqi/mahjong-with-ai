@@ -14,6 +14,8 @@ export interface WinScenePlan {
 
 const PATTERN_TIER: Record<FanPatternId, SceneTier> = {
   pinghu: 'basic',
+  pengpenghu: 'big',
+  qingyise: 'big',
   qidui: 'big',
   shisanyao: 'top',
   gangshangkaihua: 'big',
@@ -21,6 +23,8 @@ const PATTERN_TIER: Record<FanPatternId, SceneTier> = {
 
 const PATTERN_LABEL: Record<FanPatternId, string> = {
   pinghu: '平胡',
+  pengpenghu: '碰碰胡',
+  qingyise: '清一色',
   qidui: '七对',
   shisanyao: '十三幺',
   gangshangkaihua: '杠上开花',
@@ -28,7 +32,7 @@ const PATTERN_LABEL: Record<FanPatternId, string> = {
 
 const TIER_RANK: Record<SceneTier, number> = { basic: 0, big: 1, top: 2 };
 
-/** Map domain patterns to the highest presentation tier. */
+/** Map domain patterns to the highest presentation tier (not total fan). */
 export function sceneTierForPatterns(patterns: readonly FanPatternId[]): SceneTier {
   let best: SceneTier = 'basic';
   for (const pattern of patterns) {
