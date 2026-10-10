@@ -1,4 +1,8 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {
   displayHand,
   PLAYER_SEAT,
@@ -7,6 +11,8 @@ import {
   type PhysicalTile,
   type Seat,
 } from '../core';
+import { createParticleSystem } from '../particles/particleSystem';
+import type { ParticleSystem } from '../particles/types';
 import {
   createTile,
   getTileBackPattern,
@@ -17,6 +23,8 @@ import {
   TILE_W,
   type PreviewTile,
 } from '../preview/tiles';
+import type { QualitySettings } from '../quality/types';
+import { settingsForTier } from '../quality/presets';
 import { blendSkyColumn, rgbToHex } from '../theme/skyBlend';
 import type { ThemeModules } from '../theme/types';
 
@@ -58,7 +66,7 @@ export class TableView {
   private transitionTo: ThemeModules | null = null;
   private transitionStartedAt = 0;
   private transitionMs = 450;
-  private particles: THREE.Points | null = null;
+  private ambientSys: ParticleSystem | null = null;
   private particleVel: Float32Array | null = null;
   private particleKind: 'dust' | 'petals' | null = null;
   private lastParticleTick = 0;
@@ -68,12 +76,18 @@ export class TableView {
   private pointer = new THREE.Vector2();
   private dragTileId: string | null = null;
   private dragOrigin: THREE.Vector3 | null = null;
+  private quality: QualitySettings = settingsForTier('mid');
+  private gpuParticlesAvailable = true;
+  private composer: EffectComposer | null = null;
+  private bloomPass: UnrealBloomPass | null = null;
+  private lastThemeModules: ThemeModules | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.quality.dprCap));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.scene.background = new THREE.Color(0x14261c);
     this.scene.fog = new THREE.Fog(0x14261c, 24, 55);
@@ -87,6 +101,7 @@ export class TableView {
     this.key = new THREE.DirectionalLight(0xfff1dc, 1.35);
     this.key.position.set(4, 12, 6);
     this.key.castShadow = true;
+    this.key.shadow.mapSize.set(this.quality.shadowMapSize, this.quality.shadowMapSize);
     this.scene.add(this.key);
 
     this.feltMat = new THREE.MeshStandardMaterial({ color: 0x0d5a3c, roughness: 0.92 });
@@ -155,6 +170,7 @@ export class TableView {
 
   /** Apply theme appearance; optional cross-fade over transitionMs (no black frame). */
   applyTheme(modules: ThemeModules, opts?: { transitionMs?: number; from?: ThemeModules }): void {
+    this.lastThemeModules = modules;
     const ms = opts?.transitionMs ?? 0;
     if (ms > 0 && opts?.from) {
       this.transitionFrom = opts.from;
@@ -173,8 +189,43 @@ export class TableView {
     return this.particleKind;
   }
 
+  ambientParticleBackend(): 'gpu' | 'cpu' | null {
+    return this.ambientSys?.backend ?? null;
+  }
+
+  qualitySettings(): QualitySettings {
+    return { ...this.quality };
+  }
+
   tileBackPattern(): 'solid' | 'cloud' {
     return getTileBackPattern();
+  }
+
+  /** Apply 画质档 to DPR, shadows, Bloom, particles, and sky simplification. */
+  applyQuality(settings: QualitySettings, opts?: { gpuParticlesAvailable?: boolean }): void {
+    this.quality = { ...settings };
+    if (opts?.gpuParticlesAvailable != null) {
+      this.gpuParticlesAvailable = opts.gpuParticlesAvailable;
+    }
+
+    const dpr = Math.min(window.devicePixelRatio || 1, settings.dprCap);
+    this.renderer.setPixelRatio(dpr);
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+
+    const shadowsOn = settings.shadows !== 'off';
+    this.renderer.shadowMap.enabled = shadowsOn;
+    this.key.castShadow = shadowsOn;
+    if (shadowsOn) {
+      this.renderer.shadowMap.type =
+        settings.shadows === 'high' ? THREE.PCFSoftShadowMap : THREE.BasicShadowMap;
+      this.key.shadow.mapSize.set(settings.shadowMapSize, settings.shadowMapSize);
+    }
+
+    this.syncBloom(settings);
+    if (this.lastThemeModules) {
+      this.applyThemeAt(this.lastThemeModules, this.lastThemeModules, 1);
+    }
+    this.onResize();
   }
 
   /** Interpolate all appearance fields — sky/fog/lights/mark/tileBack included (story 90). */
@@ -227,6 +278,28 @@ export class TableView {
   }
 
   private applyBlendedSky(from: ThemeModules, to: ThemeModules, t: number): void {
+    const skySteps = this.quality.sky === 'simplified' ? 8 : 256;
+
+    if (this.quality.sky === 'simplified' && t >= 1) {
+      // Low 画质档: collapse gradient skies to a single mid-band color.
+      if (to.sky.kind === 'color') {
+        if (this.skyGradientTex) {
+          this.skyGradientTex.dispose();
+          this.skyGradientTex = null;
+        }
+        this.scene.background = new THREE.Color(to.sky.color);
+        return;
+      }
+      const column = blendSkyColumn(to.sky, to.sky, 1, skySteps);
+      const mid = column[Math.floor(column.length / 2)] ?? [20, 30, 40];
+      if (this.skyGradientTex) {
+        this.skyGradientTex.dispose();
+        this.skyGradientTex = null;
+      }
+      this.scene.background = new THREE.Color(rgbToHex(mid));
+      return;
+    }
+
     if (t <= 0 && from.sky.kind === 'color' && to.sky.kind === 'color' && from.sky.color === to.sky.color) {
       if (this.skyGradientTex) {
         this.skyGradientTex.dispose();
@@ -244,11 +317,11 @@ export class TableView {
       return;
     }
     if (t >= 1 && to.sky.kind === 'gradient') {
-      this.writeSkyColumn(blendSkyColumn(to.sky, to.sky, 1, 256));
+      this.writeSkyColumn(blendSkyColumn(to.sky, to.sky, 1, skySteps));
       return;
     }
 
-    const column = blendSkyColumn(from.sky, to.sky, t, 256);
+    const column = blendSkyColumn(from.sky, to.sky, t, skySteps);
     this.writeSkyColumn(column);
   }
 
@@ -289,25 +362,54 @@ export class TableView {
 
   private syncAmbientParticles(modules: ThemeModules, strength: number): void {
     const kind = modules.ambientParticles.kind;
-    if (!this.particles || this.particleKind !== kind) {
+    const preferGpu = this.quality.preferGpuParticles;
+    const needRebuild =
+      !this.ambientSys ||
+      this.particleKind !== kind ||
+      this.ambientSys.capacity !== this.quality.particleBudget ||
+      this.ambientSys.backend !== (preferGpu && this.gpuParticlesAvailable ? 'gpu' : 'cpu');
+
+    if (needRebuild) {
       this.disposeParticles();
       this.createParticles(kind, modules.ambientParticles.color);
     }
-    if (!this.particles) return;
-    const mat = this.particles.material as THREE.PointsMaterial;
-    mat.color.setHex(modules.ambientParticles.color);
-    mat.opacity = Math.max(0.12, 0.55 * Math.min(1, Math.max(0, strength)));
-    mat.size = kind === 'petals' ? 0.14 : 0.06;
+    if (!this.ambientSys) return;
+
+    const opacity = Math.max(0.12, 0.55 * Math.min(1, Math.max(0, strength)));
+    const mat = this.ambientSys.points.material;
+    if (mat instanceof THREE.PointsMaterial) {
+      mat.color.setHex(modules.ambientParticles.color);
+      mat.opacity = opacity;
+      mat.size = kind === 'petals' ? 0.14 : 0.06;
+    } else if (mat instanceof THREE.ShaderMaterial && mat.uniforms.uScale) {
+      mat.uniforms.uScale.value = kind === 'petals' ? 520 : 360;
+      mat.opacity = opacity;
+    }
   }
 
   private createParticles(kind: 'dust' | 'petals', color: number): void {
-    const count = kind === 'petals' ? 96 : 64;
-    const positions = new Float32Array(count * 3);
+    const count = this.quality.particleBudget;
+    const preferGpu = this.quality.preferGpuParticles;
+    const sys = createParticleSystem({
+      capacity: Math.max(1, count),
+      preferGpu,
+      gpuAvailable: this.gpuParticlesAvailable,
+    });
+    sys.setBudget(count);
+    sys.points.name = `ambient-${kind}-${sys.backend}`;
+
     const vel = new Float32Array(count * 3);
+    const pos = sys.points.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const arr = pos.array as Float32Array;
+    const col = sys.points.geometry.getAttribute('aColor') as THREE.BufferAttribute | undefined;
+    const r = ((color >> 16) & 0xff) / 255;
+    const g = ((color >> 8) & 0xff) / 255;
+    const b = (color & 0xff) / 255;
+
     for (let i = 0; i < count; i++) {
-      positions[i * 3] = (Math.random() - 0.5) * 12;
-      positions[i * 3 + 1] = 0.4 + Math.random() * 4.5;
-      positions[i * 3 + 2] = (Math.random() - 0.5) * 9;
+      arr[i * 3] = (Math.random() - 0.5) * 12;
+      arr[i * 3 + 1] = 0.4 + Math.random() * 4.5;
+      arr[i * 3 + 2] = (Math.random() - 0.5) * 9;
       if (kind === 'petals') {
         vel[i * 3] = (Math.random() - 0.5) * 0.25;
         vel[i * 3 + 1] = -0.15 - Math.random() * 0.35;
@@ -317,41 +419,41 @@ export class TableView {
         vel[i * 3 + 1] = 0.04 + Math.random() * 0.08;
         vel[i * 3 + 2] = (Math.random() - 0.5) * 0.08;
       }
+      if (col) {
+        col.setXYZ(i, r, g, b);
+      }
+      // Keep ambient particles continuously visible via alpha attribute.
+      const alpha = sys.points.geometry.getAttribute('aAlpha');
+      if (alpha) alpha.setX(i, 0.55);
+      const size = sys.points.geometry.getAttribute('aSize');
+      if (size) size.setX(i, kind === 'petals' ? 0.14 : 0.06);
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const mat = new THREE.PointsMaterial({
-      color,
-      size: kind === 'petals' ? 0.14 : 0.06,
-      transparent: true,
-      opacity: 0.55,
-      depthWrite: false,
-      sizeAttenuation: true,
-    });
-    this.particles = new THREE.Points(geo, mat);
-    this.particles.name = `ambient-${kind}`;
+    pos.needsUpdate = true;
+    if (col) col.needsUpdate = true;
+
+    this.ambientSys = sys;
     this.particleVel = vel;
     this.particleKind = kind;
-    this.scene.add(this.particles);
+    this.scene.add(sys.points);
   }
 
   private disposeParticles(): void {
-    if (!this.particles) return;
-    this.scene.remove(this.particles);
-    this.particles.geometry.dispose();
-    (this.particles.material as THREE.PointsMaterial).dispose();
-    this.particles = null;
+    if (!this.ambientSys) return;
+    this.scene.remove(this.ambientSys.points);
+    this.ambientSys.dispose();
+    this.ambientSys = null;
     this.particleVel = null;
     this.particleKind = null;
   }
 
   private tickParticles(now: number): void {
-    if (!this.particles || !this.particleVel) return;
+    if (!this.ambientSys || !this.particleVel) return;
     const dt = this.lastParticleTick ? Math.min(0.05, (now - this.lastParticleTick) / 1000) : 0.016;
     this.lastParticleTick = now;
-    const pos = this.particles.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const pos = this.ambientSys.points.geometry.getAttribute('position') as THREE.BufferAttribute;
     const arr = pos.array as Float32Array;
-    for (let i = 0; i < arr.length; i += 3) {
+    const n = Math.min(arr.length, this.particleVel.length);
+    for (let i = 0; i < n; i += 3) {
       arr[i]! += this.particleVel[i]! * dt * 60 * 0.016;
       arr[i + 1]! += this.particleVel[i + 1]! * dt * 60 * 0.016;
       arr[i + 2]! += this.particleVel[i + 2]! * dt * 60 * 0.016;
@@ -365,6 +467,29 @@ export class TableView {
       }
     }
     pos.needsUpdate = true;
+  }
+
+  private syncBloom(settings: QualitySettings): void {
+    if (settings.bloom === 'off') {
+      this.composer = null;
+      this.bloomPass = null;
+      return;
+    }
+    if (!this.composer || !this.bloomPass) {
+      this.composer = new EffectComposer(this.renderer);
+      this.composer.addPass(new RenderPass(this.scene, this.camera));
+      this.bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        0.28,
+        0.5,
+        0.92,
+      );
+      this.composer.addPass(this.bloomPass);
+      this.composer.addPass(new OutputPass());
+    }
+    const scale = settings.bloom === 'half' ? 0.5 : 1;
+    this.bloomPass.strength = 0.28 * scale;
+    this.composer.setSize(window.innerWidth * scale, window.innerHeight * scale);
   }
 
   private makeMarkTexture(glyph: string, color: number): THREE.CanvasTexture {
@@ -407,7 +532,13 @@ export class TableView {
   private onResize(): void {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
+    const dpr = Math.min(window.devicePixelRatio || 1, this.quality.dprCap);
+    this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    if (this.composer && this.quality.bloom !== 'off') {
+      const scale = this.quality.bloom === 'half' ? 0.5 : 1;
+      this.composer.setSize(window.innerWidth * scale, window.innerHeight * scale);
+    }
   }
 
   sync(state: HandState | null, selectedTileId: string | null): void {
@@ -588,7 +719,11 @@ export class TableView {
       }
     }
     this.tickParticles(now);
-    this.renderer.render(this.scene, this.camera);
+    if (this.composer && this.quality.bloom !== 'off') {
+      this.composer.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
   }
 }
 
