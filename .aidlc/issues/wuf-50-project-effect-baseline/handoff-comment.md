@@ -2,4 +2,4 @@
 文档：
 - mahjong-with-ai/.aidlc/issues/wuf-50-project-effect-baseline/README.md
 
-基线：a939b8e；Evidence Gaps：无。
+分支已推送；Evidence Gaps：无。
