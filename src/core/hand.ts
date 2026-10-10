@@ -5,6 +5,7 @@ import {
   listChowOptions,
   nearestAfter,
   nextSeat,
+  orderWinnerSeats,
   otherSeats,
   pendingClaimSeats,
   pungTileIds,
@@ -216,7 +217,9 @@ function emitHandWon(
   winKind: 'discard' | 'self_draw',
   gangShangKaiHua: boolean,
 ): DomainEvent {
-  const winners = winnerSeats.map((seat) =>
+  const orderedSeats =
+    winKind === 'discard' ? orderWinnerSeats(discarder, winnerSeats) : [...winnerSeats];
+  const winners = orderedSeats.map((seat) =>
     buildWinnerResult(state, seat, tile, gangShangKaiHua && seat === discarder),
   );
   const winSettlement: WinSettlement = {
@@ -539,7 +542,10 @@ function resolveClaimsWindow(state: HandState): DomainEvent[] {
   if (!window || window.mode !== 'claims') throw new Error('no claims window');
   if (window.pending.length > 0) return [];
 
-  const winners = ([0, 1, 2, 3] as Seat[]).filter((s) => window.locked[s]?.kind === 'win');
+  const winners = orderWinnerSeats(
+    window.discarder,
+    ([0, 1, 2, 3] as Seat[]).filter((s) => window.locked[s]?.kind === 'win'),
+  );
   if (winners.length > 0) {
     return [emitHandWon(state, winners, window.discarder, window.tile, 'discard', false)];
   }

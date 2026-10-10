@@ -2,7 +2,10 @@ export {
   canChowFrom,
   listChowOptions,
   nearestAfter,
+  nextDealerAfterWin,
   nextSeat,
+  orderWinnerSeats,
+  seatsAfter,
   type ChowOption,
   type LegalClaims,
 } from './claims';

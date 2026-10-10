@@ -249,7 +249,7 @@ export function bootPlayApp(): void {
     lastHandWonEventCount = handWonEvents.length;
     const latest = handWonEvents[handWonEvents.length - 1]!;
     if (latest.type !== 'HandWon') return;
-    scenes.scheduleWinners(latest.winners);
+    scenes.scheduleWinners(latest.winners, latest.discarder);
   };
 
   const refresh = (): void => {

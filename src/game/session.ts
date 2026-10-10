@@ -7,6 +7,7 @@ import {
   legalClaims,
   legalDiscardTileIds,
   legalSelfActions,
+  nextDealerAfterWin,
   PLAYER_SEAT,
   type ChowOption,
   type DomainEvent,
@@ -128,7 +129,7 @@ export class PlaySession {
     }
 
     if (this.state.phase === 'hand_won' && this.state.winSettlement) {
-      const nextDealer = nextDealerAfterWin(this.state.winSettlement);
+      const nextDealer = nextDealerFromSettlement(this.state.winSettlement);
       this.start(seed, nextDealer);
       return;
     }
@@ -503,15 +504,11 @@ export class PlaySession {
   }
 }
 
-function nextDealerAfterWin(settlement: WinSettlement): Seat {
-  if (settlement.winners.length === 1) return settlement.winners[0]!.seat;
-  // Nearest winner after the discarder (一炮多响); kept deterministic for later tickets.
-  const discarder = settlement.discarder;
-  for (let i = 1; i <= 4; i++) {
-    const seat = ((discarder + i) % 4) as Seat;
-    if (settlement.winners.some((w) => w.seat === seat)) return seat;
-  }
-  return settlement.winners[0]!.seat;
+function nextDealerFromSettlement(settlement: WinSettlement): Seat {
+  return nextDealerAfterWin(
+    settlement.winners.map((w) => w.seat),
+    settlement.discarder,
+  );
 }
 
 function takeFromPool(pool: PhysicalTile[], code: TileCode): PhysicalTile {

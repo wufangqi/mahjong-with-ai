@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { listChowOptions, nearestAfter, nextSeat } from './claims';
+import { listChowOptions, nearestAfter, nextDealerAfterWin, nextSeat, orderWinnerSeats } from './claims';
 import { applyCommand, canWinOnDiscard, ensureDrawn, legalClaims, totalTileCount } from './hand';
 import { createFullSet, FULL_SET_SIZE, sortHand, type PhysicalTile, type TileCode } from './tiles';
 import type { HandState, Seat } from './types';
@@ -159,6 +159,12 @@ describe('claim resolution priority', () => {
     expect(nearestAfter(0, [3, 1])).toBe(1);
     expect(nearestAfter(2, [0, 1])).toBe(0);
     expect(nearestAfter(1, [0, 3])).toBe(3);
+  });
+
+  it('picks the nearest multi-win seat after the discarder as next dealer', () => {
+    expect(orderWinnerSeats(1, [0, 2, 3])).toEqual([2, 3, 0]);
+    expect(nextDealerAfterWin([0, 2, 3], 1)).toBe(2);
+    expect(nextDealerAfterWin([3], 1)).toBe(3);
   });
 
   it('applies chow and lets the claimant discard next without drawing', () => {

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { WinnerResult } from '../core';
 import {
+  orderWinnersForScenes,
   planWinScene,
   sceneTierForPatterns,
+  type WinScenePlan,
   WinSceneScheduler,
 } from './winPresentation';
 
@@ -55,6 +57,19 @@ describe('planWinScene', () => {
   });
 });
 
+describe('orderWinnersForScenes', () => {
+  it('orders by top → big → basic, then same tier from discarder next seat', () => {
+    const winners: WinnerResult[] = [
+      { seat: 0, patterns: ['pinghu'], fan: 1, hand: [] },
+      { seat: 2, patterns: ['qidui'], fan: 1, hand: [] },
+      { seat: 3, patterns: ['shisanyao'], fan: 1, hand: [] },
+      { seat: 1, patterns: ['qingyise'], fan: 1, hand: [] },
+    ];
+    // Discarder 0 → seat order after: 1, 2, 3. Tiers: 3 top, 1+2 big (1 before 2), 0 basic.
+    expect(orderWinnersForScenes(winners, 0).map((w) => w.seat)).toEqual([3, 1, 2, 0]);
+  });
+});
+
 describe('WinSceneScheduler', () => {
   it('maps 平胡 to basic and enters scheduling within 100 ms', () => {
     let clock = 0;
@@ -68,7 +83,7 @@ describe('WinSceneScheduler', () => {
     scheduler.onPlay((plans) => played.push(plans));
 
     const requestAt = clock;
-    scheduler.scheduleWinners([pinghuWinner]);
+    scheduler.scheduleWinners([pinghuWinner], 1);
     expect(scheduler.getLastScheduledAt()).toBe(requestAt);
     expect((scheduler.getLastScheduledAt() ?? 0) - requestAt).toBeLessThan(100);
 
@@ -82,6 +97,30 @@ describe('WinSceneScheduler', () => {
     ]);
   });
 
+  it('schedules multi-win scenes in presentation order', () => {
+    const deferred: Array<() => void> = [];
+    const played: WinScenePlan[][] = [];
+    const scheduler = new WinSceneScheduler({
+      now: () => 0,
+      defer: (fn) => deferred.push(fn),
+    });
+    scheduler.onPlay((plans) => played.push(plans));
+
+    scheduler.scheduleWinners(
+      [
+        { seat: 0, patterns: ['pinghu'], fan: 1, hand: [] },
+        { seat: 2, patterns: ['qidui'], fan: 1, hand: [] },
+        { seat: 3, patterns: ['shisanyao'], fan: 1, hand: [] },
+      ],
+      1,
+    );
+    deferred.shift()?.();
+
+    // Discarder 1 → after: 2,3,0. Order: top(3), big(2), basic(0).
+    expect(played[0]!.map((p) => p.seat)).toEqual([3, 2, 0]);
+    expect(played[0]!.map((p) => p.tier)).toEqual(['top', 'big', 'basic']);
+  });
+
   it('replays the last planned scene', () => {
     const deferred: Array<() => void> = [];
     const played: unknown[] = [];
@@ -91,7 +130,7 @@ describe('WinSceneScheduler', () => {
     });
     scheduler.onPlay((plans) => played.push(plans));
 
-    scheduler.scheduleWinners([pinghuWinner]);
+    scheduler.scheduleWinners([pinghuWinner], 1);
     deferred.shift()?.();
     scheduler.replay();
     deferred.shift()?.();
