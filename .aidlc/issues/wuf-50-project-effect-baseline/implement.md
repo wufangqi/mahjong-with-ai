@@ -30,6 +30,14 @@ npx playwright install --with-deps chromium
 npm run test:e2e
 ```
 
+## 回修（review=fail）
+
+已回应 `review.md` 硬失败项：
+
+- 去掉 `src/preview/{scene,tiles,fx,court,audio}.ts` 的全部 `@ts-nocheck`
+- 为场面代码补齐类型，使 `npm run typecheck`（`tsc --strict`）真实检查该表面
+- 本地复验：typecheck / unit / build / e2e 通过
+
 ## 后续
 
 不跳过 review。场面时间轴 JSON 化、主题系统与规则核心属后续切片，不在本票范围。

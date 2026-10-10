@@ -1,17 +1,22 @@
-// @ts-nocheck - mechanical port from prototype/mahjong-win-demo
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { TILE_W, TILE_H, TILE_D, GOLD, FONT_SERIF, createTile, setTileCode, tileGeometry, sideMat, backMat, setAnisotropy, frontMaterial } from './tiles';
-import { ParticlePool, makePillar, makeRipple, sampleGlyph, makePointsMaterial, pointUniforms, ease, clamp01 } from './fx';
+import { ParticlePool, makePillar, makeRipple, sampleGlyph, makePointsMaterial, pointUniforms, ease, clamp01, type FxMesh } from './fx';
 import { sfx, stopAll as stopAudio, setMuted, isMuted } from './audio';
 import { createHeavenCourt } from './court';
-import { FIXED_HANDS } from './fixedHands';
+import { FIXED_HANDS, type HandName } from './fixedHands';
+
+function mustEl<T extends HTMLElement>(id: string): T {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`missing #${id}`);
+  return el as T;
+}
 
 // ---------------- 渲染器 / 场景 ----------------
-const canvas = document.getElementById('c');
+const canvas = mustEl<HTMLCanvasElement>('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -30,13 +35,13 @@ const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerH
 const EYE = new THREE.Vector3(0, 4.7, 18.8);
 const CAM_TARGET = new THREE.Vector3(0, 0.55, 0.2);
 const camBase = new THREE.Vector3();
-const look = { yaw: 0, pitch: 0 };
+const look: { yaw: number; pitch: number } = { yaw: 0, pitch: 0 };
 function updateCamBase() {
   const aspect = window.innerWidth / window.innerHeight;
   camera.fov = aspect < 0.85 ? 72 : 60;
   camera.updateProjectionMatrix();
   camBase.copy(EYE);
-  if (scene.fog) { scene.fog.near = 38; scene.fog.far = 110; }
+  if (scene.fog instanceof THREE.Fog) { scene.fog.near = 38; scene.fog.far = 110; }
 }
 updateCamBase();
 camera.position.copy(camBase);
@@ -57,9 +62,10 @@ const fxLight = new THREE.PointLight(0xffd27a, 0, 14, 2); // 特效时点亮
 fxLight.position.set(0, 2.5, 0.5); scene.add(fxLight);
 
 // ---------------- 牌桌 ----------------
-function feltTexture() {
+function feltTexture(): THREE.CanvasTexture {
   const S = 1024, c = document.createElement('canvas'); c.width = c.height = S;
   const ctx = c.getContext('2d');
+  if (!ctx) throw new Error('2D canvas unavailable');
   const g = ctx.createRadialGradient(S / 2, S / 2, 60, S / 2, S / 2, S * 0.72);
   g.addColorStop(0, '#13684a'); g.addColorStop(0.6, '#0b4a34'); g.addColorStop(1, '#062a1e');
   ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
@@ -76,9 +82,10 @@ function feltTexture() {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
   return t;
 }
-function woodTexture() {
+function woodTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas'); c.width = 512; c.height = 64;
   const ctx = c.getContext('2d');
+  if (!ctx) throw new Error('2D canvas unavailable');
   ctx.fillStyle = '#3a1d0e'; ctx.fillRect(0, 0, 512, 64);
   for (let i = 0; i < 70; i++) {
     ctx.strokeStyle = `rgba(${20 + Math.random() * 40},${8 + Math.random() * 14},4,${0.25 + Math.random() * 0.3})`;
@@ -124,10 +131,10 @@ const court = createHeavenCourt(scene);
 }
 
 // ---------------- 手牌 ----------------
-const HANDS = FIXED_HANDS;
+const HANDS: Record<HandName, readonly string[]> = FIXED_HANDS;
 const HAND_Z = 4.35, HAND_TILT = 0;
 // 绕牌心倾斜后，把底边落到桌面上
-function handRestY(tilt) {
+function handRestY(tilt: number): number {
   const h = TILE_H / 2, d = TILE_D / 2, c = Math.cos(tilt), s = Math.sin(tilt);
   let minY = Infinity;
   for (const [y, z] of [[h, d], [h, -d], [-h, d], [-h, -d]]) minY = Math.min(minY, y * c - z * s);
@@ -144,7 +151,7 @@ const tiles = HANDS.idle.map((code, i) => {
   scene.add(t.group);
   return t;
 });
-function setHand(name) { HANDS[name].forEach((c, i) => setTileCode(tiles[i], c)); }
+function setHand(name: HandName): void { HANDS[name].forEach((c, i) => setTileCode(tiles[i], c)); }
 
 // ---------------- 后处理 ----------------
 const composer = new EffectComposer(renderer);
@@ -157,10 +164,19 @@ composer.addPass(new OutputPass());
 // ---------------- 全局状态 ----------------
 const sparks = new ParticlePool(5000);
 scene.add(sparks.points);
-const st = {
+const st: {
+  effect: Effect | null;
+  timeScale: number;
+  dolly: number;
+  camLift: number;
+  shake: number;
+  flash: number;
+  bloomBoost: number;
+  fxLight: number;
+} = {
   effect: null,
-  timeScale: 1,        // 粒子时间缩放（慢动作）
-  dolly: 0,            // 镜头推拉
+  timeScale: 1,
+  dolly: 0,
   camLift: 0,
   shake: 0,
   flash: 0,
@@ -168,23 +184,23 @@ const st = {
   fxLight: 0,
 };
 const ui = {
-  flash: document.getElementById('flash'),
-  vignette: document.getElementById('vignette'),
-  banner: document.getElementById('banner'),
-  bannerSub: document.getElementById('banner-sub'),
-  buttons: [...document.querySelectorAll('[data-fx]')],
+  flash: mustEl<HTMLElement>('flash'),
+  vignette: mustEl<HTMLElement>('vignette'),
+  banner: mustEl<HTMLElement>('banner'),
+  bannerSub: mustEl<HTMLElement>('banner-sub'),
+  buttons: [...document.querySelectorAll<HTMLButtonElement>('[data-fx]')],
 };
 
-function showBanner(text, sub, cls, delay = 0) {
+function showBanner(text: string, sub: string, cls: string, delay = 0): void {
   const b = ui.banner;
   b.className = ''; b.style.animationDelay = ''; void b.offsetWidth;
-  b.querySelector('.main').textContent = text;
+  const main = b.querySelector('.main'); if (main) main.textContent = text;
   ui.bannerSub.textContent = sub;
   b.style.setProperty('--delay', `${delay}s`);
   b.className = `show ${cls}`;
 }
 
-function resetAll() {
+function resetAll(): void {
   if (st.effect) { st.effect.dispose(); st.effect = null; }
   for (const t of tiles) {
     t.group.position.copy(t.basePos); t.group.quaternion.copy(t.baseQuat);
@@ -201,27 +217,42 @@ function resetAll() {
 }
 
 class Effect {
-  constructor(duration) { this.t = 0; this.duration = duration; this.group = new THREE.Group(); scene.add(this.group); }
-  get done() { return this.t >= this.duration; }
-  dispose() {
-    scene.remove(this.group);
-    this.group.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+  t = 0;
+  duration: number;
+  group: THREE.Group;
+  constructor(duration: number) {
+    this.duration = duration;
+    this.group = new THREE.Group();
+    scene.add(this.group);
   }
+  get done(): boolean { return this.t >= this.duration; }
+  dispose(): void {
+    scene.remove(this.group);
+    this.group.traverse((o) => {
+      const obj = o as THREE.Mesh;
+      if (obj.geometry) obj.geometry.dispose();
+      const mat = obj.material;
+      if (!mat) return;
+      if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+      else mat.dispose();
+    });
+  }
+  update(_dt: number): void {}
 }
 
 const GLYPH_POS = new THREE.Vector3(0, 2.05, 2.1);
-const rnd = (a, b) => a + Math.random() * (b - a);
+const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const _v = new THREE.Vector3();
 
 // ===== 1. 基础胡：牌弹起 + 金边闪光 + 闪粉 =====
 class BasicWin extends Effect {
+  burst = false;
   constructor() {
     super(2.6);
-    this.burst = false;
     showBanner('胡', '平胡 · 基础胡', 'basic', 0.2);
     sfx.basic();
   }
-  update(dt) {
+  update(dt: number): void {
     const t = (this.t += dt);
     tiles.forEach((tile, i) => {
       const u = clamp01((t - i * 0.035) / 1.9);
@@ -258,6 +289,10 @@ class BasicWin extends Effect {
 
 // ===== 2. 大牌胡：聚拢中心 + 光柱 + 涟漪 + 镜头推拉 =====
 class BigWin extends Effect {
+  pillar: FxMesh;
+  core: FxMesh;
+  ripple: FxMesh;
+  impact = false;
   constructor() {
     super(3.8);
     this.pillar = makePillar(new THREE.Color(1.0, 0.55, 0.15), 1.0);
@@ -266,17 +301,16 @@ class BigWin extends Effect {
     this.ripple = makeRipple(new THREE.Color(1.5, 0.85, 0.25), 15);
     this.ripple.position.y = 0.01;
     this.group.add(this.pillar, this.core, this.ripple);
-    this.impact = false;
     showBanner('清一色', '大牌胡 · 番数翻倍', 'big', 0.9);
     sfx.big();
   }
-  ringPos(i, t, out) {
+  ringPos(i: number, t: number, out: THREE.Vector3): number {
     const a = (i / 14) * Math.PI * 2 + t * 1.6;
     const y = 0.9 + Math.min(1, Math.max(0, t - 0.9) / 1.7) * 0.6 + Math.sin(t * 3 + i) * 0.05;
     out.set(Math.sin(a) * 1.55, y, Math.cos(a) * 1.55);
     return a;
   }
-  update(dt) {
+  update(dt: number): void {
     const t = (this.t += dt);
     const q = new THREE.Quaternion(), qt = new THREE.Quaternion();
     tiles.forEach((tile, i) => {
@@ -333,11 +367,27 @@ class BigWin extends Effect {
 
 // ===== 3. 顶级胡：慢动作 → 碎成光粒 → 重组成「胡」字 + 强辉光 + 震屏 =====
 class TopWin extends Effect {
+  N = 5000;
+  slow = 0;
+  stage = 0;
+  target!: Float32Array;
+  start!: Float32Array;
+  vel!: Float32Array;
+  mid!: Float32Array;
+  phase!: Float32Array;
+  pos!: Float32Array;
+  col!: Float32Array;
+  size!: Float32Array;
+  alpha!: Float32Array;
+  baseCol!: Float32Array;
+  baseSize!: Float32Array;
+  geo!: THREE.BufferGeometry;
+  points!: THREE.Points;
+  ripple!: FxMesh;
+  backdrop!: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  anchor!: THREE.Object3D;
   constructor() {
     super(4.6);
-    this.N = 5000;
-    this.slow = 0;
-    this.stage = 0;
     // 「胡」字目标位置：悬浮于桌面中央并朝向镜头
     const anchor = new THREE.Object3D();
     anchor.position.copy(GLYPH_POS);
@@ -369,7 +419,7 @@ class TopWin extends Effect {
       this.size[i] = this.baseSize[i] = rnd(0.08, 0.17);
       this.phase[i] = Math.random() * Math.PI * 2;
     }
-    const mk = (a, n) => new THREE.BufferAttribute(a, n).setUsage(THREE.DynamicDrawUsage);
+    const mk = (a: Float32Array, n: number) => new THREE.BufferAttribute(a, n).setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('position', mk(this.pos, 3));
     geo.setAttribute('aColor', mk(this.col, 3));
     geo.setAttribute('aSize', mk(this.size, 1));
@@ -384,7 +434,9 @@ class TopWin extends Effect {
     this.group.add(this.ripple);
     // 「胡」字后方的暗色光晕底板，提升可读性
     const bc = document.createElement('canvas'); bc.width = bc.height = 128;
-    const bctx = bc.getContext('2d'); const bg = bctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    const bctx = bc.getContext('2d');
+    if (!bctx) throw new Error('2D canvas unavailable');
+    const bg = bctx.createRadialGradient(64, 64, 0, 64, 64, 64);
     bg.addColorStop(0, 'rgba(0,0,0,0.92)'); bg.addColorStop(0.5, 'rgba(8,3,0,0.7)'); bg.addColorStop(1, 'rgba(0,0,0,0)');
     bctx.fillStyle = bg; bctx.fillRect(0, 0, 128, 128);
     this.backdrop = new THREE.Mesh(new THREE.PlaneGeometry(6.5, 6.5), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(bc), transparent: true, depthWrite: false, opacity: 0 }));
@@ -397,7 +449,7 @@ class TopWin extends Effect {
     showBanner('国士无双', '役满 · 顶级胡', 'top', 2.45);
     sfx.top();
   }
-  explode() {
+  explode(): void {
     // 从各张牌体积内取样起点
     const N = this.N;
     for (let i = 0; i < N; i++) {
@@ -410,7 +462,7 @@ class TopWin extends Effect {
     tiles.forEach(t => { t.group.visible = false; });
     this.points.visible = true;
   }
-  update(dt) {
+  update(dt: number): void {
     const t = (this.t += dt);
     const N = this.N;
     // ---- 阶段 A：慢动作（0 ~ 1.0s）----
@@ -458,7 +510,7 @@ class TopWin extends Effect {
       const tau = t - 1.0;
       const EXP_END = 0.45, CONV_END = 1.45, HOLD_END = 2.6;
       const k = 2.6;
-      const burstDist = tt => (1 - Math.exp(-k * tt)) / k;
+      const burstDist = (tt: number) => (1 - Math.exp(-k * tt)) / k;
       if (tau < EXP_END) {
         const d = burstDist(tau);
         for (let i = 0; i < N; i++) {
@@ -546,20 +598,24 @@ class TopWin extends Effect {
   }
 }
 
-const EFFECTS = { basic: BasicWin, big: BigWin, top: TopWin };
-function play(name) {
+type EffectName = Exclude<HandName, 'idle'>;
+const EFFECTS: Record<EffectName, new () => Effect> = { basic: BasicWin, big: BigWin, top: TopWin };
+function play(name: EffectName): void {
   resetAll();
   stopAudio();
   setHand(name);
   st.effect = new EFFECTS[name]();
-  ui.buttons.forEach(b => b.classList.toggle('active', b.dataset.fx === name));
+  ui.buttons.forEach((b) => b.classList.toggle('active', b.dataset.fx === name));
 }
-ui.buttons.forEach(b => b.addEventListener('click', () => play(b.dataset.fx)));
-window.addEventListener('keydown', e => {
-  const m = { '1': 'basic', '2': 'big', '3': 'top' }[e.key];
+ui.buttons.forEach((b) => b.addEventListener('click', () => {
+  const fx = b.dataset.fx;
+  if (fx === 'basic' || fx === 'big' || fx === 'top') play(fx);
+}));
+window.addEventListener('keydown', (e) => {
+  const m = ({ '1': 'basic', '2': 'big', '3': 'top' } as Record<string, EffectName | undefined>)[e.key];
   if (m) play(m);
 });
-const muteBtn = document.getElementById('mute');
+const muteBtn = mustEl<HTMLButtonElement>('mute');
 muteBtn.addEventListener('click', () => {
   setMuted(!isMuted()); if (isMuted()) stopAudio();
   muteBtn.textContent = isMuted() ? '🔇 音效关' : '🔊 音效开';
@@ -567,7 +623,7 @@ muteBtn.addEventListener('click', () => {
 
 // ---------------- 氛围尘埃 ----------------
 let dustAcc = 0;
-function ambientDust(dt) {
+function ambientDust(dt: number): void {
   dustAcc += dt * 6;
   while (dustAcc > 1) {
     dustAcc--;
@@ -577,7 +633,7 @@ function ambientDust(dt) {
 }
 
 // ---------------- 主循环 ----------------
-function onResize() {
+function onResize(): void {
   const w = window.innerWidth, h = window.innerHeight;
   camera.aspect = w / h; camera.updateProjectionMatrix();
   renderer.setSize(w, h); composer.setSize(w, h);
@@ -589,13 +645,13 @@ onResize();
 
 // 拖动画面环顾（第一人称）
 let dragging = false, lastPX = 0, lastPY = 0;
-canvas.addEventListener('pointerdown', (e) => {
+canvas.addEventListener('pointerdown', (e: PointerEvent) => {
   dragging = true;
   lastPX = e.clientX; lastPY = e.clientY;
   canvas.classList.add('dragging');
   canvas.setPointerCapture(e.pointerId);
 });
-canvas.addEventListener('pointermove', (e) => {
+canvas.addEventListener('pointermove', (e: PointerEvent) => {
   if (!dragging) return;
   look.yaw -= (e.clientX - lastPX) * 0.0028;
   look.pitch -= (e.clientY - lastPY) * 0.0022;
@@ -603,19 +659,19 @@ canvas.addEventListener('pointermove', (e) => {
   look.yaw = THREE.MathUtils.clamp(look.yaw, -1.15, 1.15);
   look.pitch = THREE.MathUtils.clamp(look.pitch, -0.62, 0.42);
 });
-function endDrag() { dragging = false; canvas.classList.remove('dragging'); }
+function endDrag(): void { dragging = false; canvas.classList.remove('dragging'); }
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
 const keys = new Set();
-window.addEventListener('keydown', (e) => { keys.add(e.key); });
-window.addEventListener('keyup', (e) => { keys.delete(e.key); });
+window.addEventListener('keydown', (e: KeyboardEvent) => { keys.add(e.key); });
+window.addEventListener('keyup', (e: KeyboardEvent) => { keys.delete(e.key); });
 
 const clock = new THREE.Clock();
 const camDir = new THREE.Vector3();
 const _fwd = new THREE.Vector3();
 const _lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 let elapsed = 0;
-function frame() {
+function frame(): void {
   requestAnimationFrame(frame);
   const dt = Math.min(clock.getDelta(), 1 / 30);
   elapsed += dt;

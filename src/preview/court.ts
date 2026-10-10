@@ -1,18 +1,21 @@
-// @ts-nocheck - mechanical port from prototype/mahjong-win-demo
 // 中国风天庭：云海、玉台、金柱、琉璃飞檐
 import * as THREE from 'three';
 
-function canvasTex(w, h, draw) {
+type DrawFn = (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
+
+function canvasTex(w: number, h: number, draw: DrawFn): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  draw(c.getContext('2d'), w, h);
+  const ctx = c.getContext('2d');
+  if (!ctx) throw new Error('2D canvas unavailable');
+  draw(ctx, w, h);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   return t;
 }
 
-function skyTexture() {
+function skyTexture(): THREE.CanvasTexture {
   return canvasTex(32, 512, (ctx, w, h) => {
     const g = ctx.createLinearGradient(0, 0, 0, h);
     g.addColorStop(0, '#160c30');
@@ -25,14 +28,14 @@ function skyTexture() {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
     ctx.globalAlpha = 0.28;
-    for (const [x, y, rx, ry, rot, col] of [[6, 210, 16, 36, 0.2, '#ffe6c4'], [22, 250, 14, 28, -0.4, '#ffd0dc'], [12, 160, 12, 22, 0.6, '#f8d8ff'], [26, 190, 10, 18, 0.1, '#ffe8c8']]) {
+    for (const [x, y, rx, ry, rot, col] of [[6, 210, 16, 36, 0.2, '#ffe6c4'], [22, 250, 14, 28, -0.4, '#ffd0dc'], [12, 160, 12, 22, 0.6, '#f8d8ff'], [26, 190, 10, 18, 0.1, '#ffe8c8']] as const) {
       ctx.fillStyle = col;
       ctx.beginPath(); ctx.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2); ctx.fill();
     }
   });
 }
 
-function moonTexture() {
+function moonTexture(): THREE.CanvasTexture {
   return canvasTex(256, 256, (ctx) => {
     const g = ctx.createRadialGradient(128, 128, 10, 128, 128, 128);
     g.addColorStop(0, 'rgba(255,250,230,1)');
@@ -44,7 +47,7 @@ function moonTexture() {
   });
 }
 
-function cloudTexture() {
+function cloudTexture(): THREE.CanvasTexture {
   return canvasTex(512, 512, (ctx) => {
     ctx.clearRect(0, 0, 512, 512);
     for (let i = 0; i < 28; i++) {
@@ -59,7 +62,7 @@ function cloudTexture() {
   });
 }
 
-function jadeTexture() {
+function jadeTexture(): THREE.CanvasTexture {
   return canvasTex(1024, 1024, (ctx, S) => {
     const g = ctx.createRadialGradient(S / 2, S / 2, 40, S / 2, S / 2, S * 0.5);
     g.addColorStop(0, '#f7f1e4');
@@ -88,7 +91,7 @@ function jadeTexture() {
   });
 }
 
-function lanternTexture() {
+function lanternTexture(): THREE.CanvasTexture {
   return canvasTex(64, 96, (ctx) => {
     const g = ctx.createLinearGradient(0, 0, 0, 96);
     g.addColorStop(0, '#ffb45a');
@@ -104,7 +107,11 @@ function lanternTexture() {
   });
 }
 
-export function createHeavenCourt(scene) {
+type PuffBase = { a: number; rad: number; y: number; sx: number; sy: number; sz: number };
+
+export type HeavenCourt = { update: (dt: number) => void };
+
+export function createHeavenCourt(scene: THREE.Scene): HeavenCourt {
   const gold = new THREE.MeshStandardMaterial({ color: 0xf0d39a, metalness: 0.78, roughness: 0.28 });
   const glaze = new THREE.MeshStandardMaterial({ color: 0x1c6d78, metalness: 0.42, roughness: 0.38 });
   const glazeDark = new THREE.MeshStandardMaterial({ color: 0x134e58, metalness: 0.35, roughness: 0.45 });
@@ -172,7 +179,7 @@ export function createHeavenCourt(scene) {
   const puffN = 18;
   const puffs = new THREE.InstancedMesh(puffGeo, puffMat, puffN);
   const dummy = new THREE.Object3D();
-  const puffBase = [];
+  const puffBase: PuffBase[] = [];
   for (let i = 0; i < puffN; i++) {
     const a = (i / puffN) * Math.PI * 2 + (i % 3) * 0.2;
     const rad = 22 + (i % 5) * 3.1;
@@ -193,11 +200,11 @@ export function createHeavenCourt(scene) {
   const voidMat = new THREE.MeshStandardMaterial({ color: 0x2a1c22, roughness: 1 });
   const SEGS = 40;
   const GAP = 0.62;
-  function inGap(a) {
+  function inGap(a: number): boolean {
     const d = a > Math.PI ? a - Math.PI * 2 : a;
     return Math.abs(d) < GAP;
   }
-  function ringMesh(geo, mat, segs, place) {
+  function ringMesh(geo: THREE.BufferGeometry, mat: THREE.Material, segs: number, place: (o: THREE.Object3D, a: number) => void): THREE.InstancedMesh {
     const mesh = new THREE.InstancedMesh(geo, mat, segs);
     let n = 0;
     for (let i = 0; i < segs; i++) {
@@ -304,7 +311,7 @@ export function createHeavenCourt(scene) {
     }
   }
 
-  function hall(x, z, w, h, d, rotY) {
+  function hall(x: number, z: number, w: number, h: number, d: number, rotY: number): THREE.Group {
     const g = new THREE.Group();
     g.position.set(x, -0.55, z);
     g.rotation.y = rotY;
@@ -344,7 +351,7 @@ export function createHeavenCourt(scene) {
 
   let t = 0;
   return {
-    update(dt) {
+    update(dt: number) {
       t += dt;
       cloudSea.rotation.y += dt * 0.012;
       lanternMat.emissiveIntensity = 1.25 + Math.sin(t * 2.2) * 0.35;
