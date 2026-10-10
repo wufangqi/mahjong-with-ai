@@ -5,8 +5,18 @@ import {
   FULL_SET_SIZE,
   sortHand,
   type PhysicalTile,
+  type TileCode,
 } from './tiles';
-import type { Command, CommandResult, DomainEvent, HandState, Seat, SeatState } from './types';
+import type {
+  Command,
+  CommandResult,
+  DomainEvent,
+  ExhaustiveDrawSettlement,
+  HandState,
+  Seat,
+  SeatState,
+} from './types';
+import { isWinningCodes, waitingTileCodes } from './winning';
 
 export const PLAYER_SEAT: Seat = 0;
 
@@ -32,6 +42,24 @@ function cloneState(state: HandState): HandState {
       cloneSeat(state.seats[2]),
       cloneSeat(state.seats[3]),
     ],
+    responseWindow: state.responseWindow
+      ? {
+          ...state.responseWindow,
+          pending: [...state.responseWindow.pending],
+          winners: [...state.responseWindow.winners],
+        }
+      : null,
+    settlement: state.settlement
+      ? {
+          ...state.settlement,
+          seats: state.settlement.seats.map((s) => ({
+            ...s,
+            hand: [...s.hand],
+            waitingTiles: [...s.waitingTiles],
+          })) as ExhaustiveDrawSettlement['seats'],
+          fanBySeat: { ...state.settlement.fanBySeat },
+        }
+      : null,
   };
 }
 
@@ -76,15 +104,48 @@ function visibleHand(seat: SeatState): PhysicalTile[] {
   return seat.drawn ? [...seat.hand, seat.drawn] : [...seat.hand];
 }
 
-function startHand(seed: number): CommandResult {
+function otherSeats(discarder: Seat): Seat[] {
+  return ([0, 1, 2, 3] as Seat[]).filter((s) => s !== discarder);
+}
+
+function handCodes(seat: SeatState): TileCode[] {
+  return seat.hand.map((t) => t.code);
+}
+
+/** Whether `seat` can win on the given discarded face code (13 concealed + tile). */
+export function canWinOnDiscard(state: HandState, seat: Seat, tileCode: TileCode): boolean {
+  const seatState = state.seats[seat];
+  if (seatState.drawn || seatState.hand.length !== 13) return false;
+  return isWinningCodes([...handCodes(seatState), tileCode]);
+}
+
+export function buildExhaustiveDrawSettlement(state: HandState): ExhaustiveDrawSettlement {
+  const seats = ([0, 1, 2, 3] as Seat[]).map((seat) => {
+    const hand = sortHand([...state.seats[seat].hand]);
+    const waiting = waitingTileCodes(hand.map((t) => t.code));
+    return {
+      seat,
+      hand,
+      ready: waiting.length > 0,
+      waitingTiles: waiting,
+    };
+  }) as ExhaustiveDrawSettlement['seats'];
+
+  return {
+    dealer: state.dealer,
+    seats,
+    fanBySeat: { 0: 0, 1: 0, 2: 0, 3: 0 },
+  };
+}
+
+function startHand(seed: number, forcedDealer?: Seat): CommandResult {
   const rng = createRng(seed);
   const wall = createFullSet();
   shuffleInPlace(wall, rng);
-  const dealer = asSeat(rng.nextInt(4));
+  const dealer = forcedDealer !== undefined ? forcedDealer : asSeat(rng.nextInt(4));
 
   const seats: HandState['seats'] = [emptySeat(), emptySeat(), emptySeat(), emptySeat()];
 
-  // 13 tiles each, starting from dealer, then dealer draws the 14th.
   for (let round = 0; round < 13; round++) {
     let seat = dealer;
     for (let i = 0; i < 4; i++) {
@@ -109,12 +170,11 @@ function startHand(seed: number): CommandResult {
     phase: 'awaiting_discard',
     wall,
     seats,
+    responseWindow: null,
+    settlement: null,
   };
 
-  const fourteenth = drawFromWall(state, dealer);
-  // Keep drawn separated on the right; concealed hand stays sorted.
-  void fourteenth;
-
+  drawFromWall(state, dealer);
   assertConservation(state);
 
   const events: DomainEvent[] = [
@@ -151,9 +211,6 @@ function discard(state: HandState, seat: Seat, tileId: string): CommandResult {
   }
 
   const seatState = state.seats[seat];
-  if (!seatState.drawn && seatState.hand.length !== 14) {
-    // After deal, current player must hold drawn (14th) tile.
-  }
   const held = visibleHand(seatState);
   if (held.length !== 14) {
     throw new Error(`seat ${seat} must hold 14 tiles to discard, has ${held.length}`);
@@ -168,7 +225,6 @@ function discard(state: HandState, seat: Seat, tileId: string): CommandResult {
     seatState.drawn = null;
   } else {
     discarded = seatState.hand.splice(found.index, 1)[0]!;
-    // Fold the previous drawn tile into the sorted hand.
     if (seatState.drawn) {
       seatState.hand.push(seatState.drawn);
       seatState.drawn = null;
@@ -179,13 +235,83 @@ function discard(state: HandState, seat: Seat, tileId: string): CommandResult {
   seatState.river.push(discarded);
   seatState.hand = sortHand(seatState.hand);
 
-  // WUF-51 slice: one confirmed discard completes the vertical cut.
-  // Later tickets resume the full draw/response loop from here.
-  state.phase = 'discard_complete';
+  const events: DomainEvent[] = [{ type: 'TileDiscarded', seat, tile: discarded }];
+
+  if (state.wall.length === 0) {
+    // Last normal draw was already taken; only win responses remain.
+    state.phase = 'awaiting_win_response';
+    state.responseWindow = {
+      discarder: seat,
+      tile: discarded,
+      pending: otherSeats(seat),
+      winners: [],
+    };
+    events.push({ type: 'WinResponseOpened', discarder: seat, tile: discarded });
+  } else {
+    state.phase = 'awaiting_discard';
+    state.turn = nextSeat(seat);
+  }
 
   assertConservation(state);
+  return { state, events };
+}
 
-  const events: DomainEvent[] = [{ type: 'TileDiscarded', seat, tile: discarded }];
+function finishResponseWindow(state: HandState): DomainEvent[] {
+  const window = state.responseWindow;
+  if (!window) throw new Error('no response window');
+  if (window.pending.length > 0) return [];
+
+  if (window.winners.length > 0) {
+    state.phase = 'hand_won';
+    state.settlement = null;
+    const event: DomainEvent = {
+      type: 'HandWon',
+      winners: [...window.winners],
+      discarder: window.discarder,
+      tile: window.tile,
+    };
+    state.responseWindow = null;
+    return [event];
+  }
+
+  const settlement = buildExhaustiveDrawSettlement(state);
+  state.phase = 'exhaustive_draw';
+  state.settlement = settlement;
+  state.responseWindow = null;
+  return [{ type: 'ExhaustiveDraw', settlement }];
+}
+
+function claimWin(state: HandState, seat: Seat): CommandResult {
+  if (state.phase !== 'awaiting_win_response' || !state.responseWindow) {
+    throw new Error('win claim is not allowed in the current phase');
+  }
+  const window = state.responseWindow;
+  if (!window.pending.includes(seat)) {
+    throw new Error(`seat ${seat} has no pending win response`);
+  }
+  if (!canWinOnDiscard(state, seat, window.tile.code)) {
+    throw new Error(`seat ${seat} cannot win on ${window.tile.code}`);
+  }
+
+  window.pending = window.pending.filter((s) => s !== seat);
+  window.winners.push(seat);
+  const events = finishResponseWindow(state);
+  assertConservation(state);
+  return { state, events };
+}
+
+function pass(state: HandState, seat: Seat): CommandResult {
+  if (state.phase !== 'awaiting_win_response' || !state.responseWindow) {
+    throw new Error('pass is not allowed in the current phase');
+  }
+  const window = state.responseWindow;
+  if (!window.pending.includes(seat)) {
+    throw new Error(`seat ${seat} has no pending win response`);
+  }
+
+  window.pending = window.pending.filter((s) => s !== seat);
+  const events = finishResponseWindow(state);
+  assertConservation(state);
   return { state, events };
 }
 
@@ -195,12 +321,24 @@ function discard(state: HandState, seat: Seat, tileId: string): CommandResult {
  */
 export function applyCommand(prev: HandState | null, command: Command): CommandResult {
   if (command.type === 'StartHand') {
-    return startHand(command.seed);
+    return startHand(command.seed, command.dealer);
   }
 
-  if (!prev) throw new Error('StartHand is required before Discard');
+  if (!prev) throw new Error('StartHand is required before other commands');
   const state = cloneState(prev);
-  return discard(state, command.seat, command.tileId);
+
+  switch (command.type) {
+    case 'Discard':
+      return discard(state, command.seat, command.tileId);
+    case 'ClaimWin':
+      return claimWin(state, command.seat);
+    case 'Pass':
+      return pass(state, command.seat);
+    default: {
+      const _exhaustive: never = command;
+      throw new Error(`unknown command ${JSON.stringify(_exhaustive)}`);
+    }
+  }
 }
 
 /** Draw for the current turn seat when they hold 13 tiles (no drawn yet). */
@@ -213,6 +351,9 @@ export function ensureDrawn(prev: HandState): CommandResult {
   if (seatState.drawn) return { state: prev, events: [] };
   if (seatState.hand.length !== 13) {
     throw new Error(`seat ${seat} unexpected hand size ${seatState.hand.length}`);
+  }
+  if (prev.wall.length === 0) {
+    throw new Error('cannot draw: wall is empty');
   }
 
   const state = cloneState(prev);

@@ -13,7 +13,7 @@ describe('PlaySession', () => {
     expect(totalTileCount(snap.state!)).toBe(FULL_SET_SIZE);
   });
 
-  it('requires a second click to confirm discard and then locks further discards', () => {
+  it('requires a second click to confirm discard and then continues the round', () => {
     const session = new PlaySession();
     session.start(7);
     const drawnId = session.snapshot().state!.seats[PLAYER_SEAT].drawn!.id;
@@ -23,15 +23,13 @@ describe('PlaySession', () => {
     expect(session.snapshot().status).toBe('awaiting_player_discard');
 
     session.clickTile(drawnId);
-    const done = session.snapshot();
-    expect(done.status).toBe('complete');
-    expect(done.state?.seats[PLAYER_SEAT].river.at(-1)?.id).toBe(drawnId);
-    expect(done.state?.phase).toBe('discard_complete');
-    expect(totalTileCount(done.state!)).toBe(FULL_SET_SIZE);
-
-    session.clickTile(drawnId);
-    expect(session.snapshot().status).toBe('complete');
-    expect(session.snapshot().state?.seats[PLAYER_SEAT].river).toHaveLength(1);
+    const after = session.snapshot();
+    expect(after.state?.seats[PLAYER_SEAT].river.at(-1)?.id).toBe(drawnId);
+    expect(totalTileCount(after.state!)).toBe(FULL_SET_SIZE);
+    // Either back to player discard later in the loop, or a terminal/response status.
+    expect(['awaiting_player_discard', 'awaiting_player_win_response', 'exhaustive_draw', 'hand_won']).toContain(
+      after.status,
+    );
   });
 
   it('accepts drag discard without a prior selection', () => {
@@ -40,7 +38,47 @@ describe('PlaySession', () => {
     const tileId = session.snapshot().state!.seats[PLAYER_SEAT].hand[0]!.id;
     session.discardByDrag(tileId);
     const snap = session.snapshot();
-    expect(snap.status).toBe('complete');
     expect(snap.state?.seats[PLAYER_SEAT].river.at(-1)?.id).toBe(tileId);
+    expect(totalTileCount(snap.state!)).toBe(FULL_SET_SIZE);
+  });
+
+  it('plays a full no-response hand to 流局 with first-legal actions', () => {
+    const session = new PlaySession();
+    session.start(42);
+    session.autoPlayPlayerFirstLegal();
+    const snap = session.snapshot();
+    expect(snap.status).toBe('exhaustive_draw');
+    expect(snap.state?.phase).toBe('exhaustive_draw');
+    expect(snap.settlement).not.toBeNull();
+    expect(snap.settlement!.fanBySeat).toEqual({ 0: 0, 1: 0, 2: 0, 3: 0 });
+    expect(snap.state!.wall).toHaveLength(0);
+    expect(totalTileCount(snap.state!)).toBe(FULL_SET_SIZE);
+
+    for (const info of snap.settlement!.seats) {
+      expect(info.hand).toHaveLength(13);
+    }
+  });
+
+  it('keeps the dealer when starting the next hand after 流局', () => {
+    const session = new PlaySession();
+    session.start(42);
+    session.autoPlayPlayerFirstLegal();
+    const dealer = session.snapshot().state!.dealer;
+    session.startNextHand(1001);
+    expect(session.snapshot().state!.dealer).toBe(dealer);
+    expect(session.snapshot().status).toBe('awaiting_player_discard');
+  });
+
+  it('is reproducible for a fixed seed through 流局', () => {
+    const a = new PlaySession();
+    a.start(99);
+    a.autoPlayPlayerFirstLegal();
+    const b = new PlaySession();
+    b.start(99);
+    b.autoPlayPlayerFirstLegal();
+    expect(a.snapshot().settlement).toEqual(b.snapshot().settlement);
+    expect(a.snapshot().state!.seats.map((s) => s.river.map((t) => t.id))).toEqual(
+      b.snapshot().state!.seats.map((s) => s.river.map((t) => t.id)),
+    );
   });
 });

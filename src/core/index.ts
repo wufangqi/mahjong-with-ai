@@ -1,5 +1,7 @@
 export {
   applyCommand,
+  buildExhaustiveDrawSettlement,
+  canWinOnDiscard,
   displayHand,
   ensureDrawn,
   legalDiscardTileIds,
@@ -20,8 +22,12 @@ export type {
   Command,
   CommandResult,
   DomainEvent,
+  ExhaustiveDrawSettlement,
   HandPhase,
   HandState,
+  ResponseWindow,
   Seat,
+  SeatDrawInfo,
   SeatState,
 } from './types';
+export { isWinningCodes, waitingTileCodes } from './winning';

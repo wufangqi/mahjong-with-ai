@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('play mode deals a seeded hand and confirms a player discard', async ({ page }) => {
+test('play mode deals a seeded hand and continues after a player discard', async ({ page }) => {
   await page.goto('./');
   await expect(page.locator('header h1')).toHaveText('AI 爽胡麻将');
   await expect(page.locator('#c')).toBeVisible();
@@ -21,14 +21,52 @@ test('play mode deals a seeded hand and confirms a player discard', async ({ pag
     return { id: drawn.id, status: window.__play!.snapshot().status };
   });
 
-  expect(discarded.status).toBe('complete');
-  await expect(page.getByTestId('status')).toContainText('不可撤销');
+  expect(discarded.id).toBeTruthy();
+  expect(['awaiting_player_discard', 'awaiting_player_win_response', 'exhaustive_draw', 'hand_won']).toContain(
+    discarded.status,
+  );
 
   const riverTail = await page.evaluate(() => {
     const river = window.__play!.snapshot().state!.seats[0].river;
     return river[river.length - 1]?.id ?? null;
   });
   expect(riverTail).toBe(discarded.id);
+});
+
+test('auto-play reaches 流局 settlement with revealed hands', async ({ page }) => {
+  await page.goto('./');
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+
+  await page.getByTestId('seed-input').fill('42');
+  await page.getByTestId('start-hand').click();
+
+  await page.evaluate(() => window.__play!.autoPlayToDraw());
+
+  await expect(page.getByTestId('draw-panel')).toBeVisible();
+  await expect(page.getByTestId('draw-panel')).toContainText('流局');
+  await expect(page.getByTestId('draw-panel')).toContainText('不计番');
+  await expect(page.getByTestId('draw-seats').locator('.draw-seat')).toHaveCount(4);
+  await expect(page.getByTestId('status')).toContainText('流局');
+
+  const settlement = await page.evaluate(() => {
+    const snap = window.__play!.snapshot();
+    return {
+      status: snap.status,
+      wall: snap.state!.wall.length,
+      fan: snap.settlement!.fanBySeat,
+      dealer: snap.state!.dealer,
+      hands: snap.settlement!.seats.map((s) => s.hand.length),
+    };
+  });
+  expect(settlement.status).toBe('exhaustive_draw');
+  expect(settlement.wall).toBe(0);
+  expect(settlement.fan).toEqual({ 0: 0, 1: 0, 2: 0, 3: 0 });
+  expect(settlement.hands).toEqual([13, 13, 13, 13]);
+
+  const dealerBefore = settlement.dealer;
+  await page.getByTestId('next-hand').click();
+  const dealerAfter = await page.evaluate(() => window.__play!.snapshot().state!.dealer);
+  expect(dealerAfter).toBe(dealerBefore);
 });
 
 test('effect preview still boots and plays fixed basic win', async ({ page }) => {

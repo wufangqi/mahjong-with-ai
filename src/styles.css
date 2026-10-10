@@ -49,6 +49,49 @@ header p { margin: 6px 0 0; font-size: 13px; opacity: .65; letter-spacing: 1px; 
   padding: 10px 18px; font-size: 15px; letter-spacing: 1px; max-width: 90vw; text-align: center; }
 #meta { position: fixed; left: 22px; top: 128px; font-size: 13px; opacity: .75; z-index: 2; letter-spacing: .5px; }
 
+#response-bar {
+  position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 3;
+  display: flex; gap: 12px;
+}
+#response-bar[hidden] { display: none; }
+#response-bar button {
+  cursor: pointer; border: 1px solid rgba(245,196,106,.55); color: #fff3d6; font: inherit;
+  letter-spacing: 2px; padding: 12px 28px; border-radius: 12px;
+  background: linear-gradient(180deg, rgba(60,30,12,.9), rgba(20,10,6,.95));
+}
+#claim-win { background: linear-gradient(180deg, rgba(120,40,30,.95), rgba(50,10,8,.95)); border-color: #f0a060; }
+
+#draw-panel {
+  position: fixed; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center;
+  background: rgba(4, 12, 10, .72); padding: 24px;
+}
+#draw-panel[hidden] { display: none; }
+.draw-panel-inner {
+  width: min(920px, 96vw); max-height: 90vh; overflow: auto;
+  background: linear-gradient(180deg, rgba(18,40,32,.97), rgba(8,18,14,.98));
+  border: 1px solid rgba(245,196,106,.4); border-radius: 16px; padding: 22px 24px 20px;
+  box-shadow: 0 18px 48px rgba(0,0,0,.55);
+}
+.draw-panel-inner h2 { margin: 0; color: var(--gold); letter-spacing: 4px; font-size: 28px; }
+.draw-summary { margin: 8px 0 18px; opacity: .75; font-size: 14px; }
+.draw-seats { display: grid; gap: 12px; }
+.draw-seat {
+  border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 12px 14px;
+  background: rgba(0,0,0,.22);
+}
+.draw-seat-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; font-size: 14px; }
+.draw-seat-head .ready { color: #9fe3b0; }
+.draw-seat-head .not-ready { color: #c9b8a0; opacity: .7; }
+.draw-hand, .draw-waiting { font-size: 15px; letter-spacing: 1px; line-height: 1.55; }
+.draw-waiting { margin-top: 4px; opacity: .85; }
+.draw-actions { margin-top: 18px; display: flex; justify-content: flex-end; }
+#next-hand {
+  cursor: pointer; border: 1px solid rgba(245,196,106,.55); color: #fff3d6; font: inherit;
+  letter-spacing: 1px; padding: 10px 20px; border-radius: 10px;
+  background: linear-gradient(180deg, rgba(40,70,50,.9), rgba(12,28,20,.95));
+}
+#next-hand:hover { border-color: var(--gold); }
+
 #banner { position: fixed; left: 50%; top: 13%; transform: translateX(-50%); text-align: center; pointer-events: none; opacity: 0; }
 #banner .main { font-family: "STKaiti", "KaiTi", "Kaiti SC", "Noto Serif CJK SC", serif; font-weight: 900; line-height: 1; white-space: nowrap; }
 #banner-sub { margin-top: 8px; font-size: 15px; letter-spacing: 6px; opacity: .85; }

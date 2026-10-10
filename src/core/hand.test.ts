@@ -95,20 +95,21 @@ describe('draw placement and discard', () => {
     expect(shown.slice(0, 13)).toEqual(sortHand(shown.slice(0, 13)));
   });
 
-  it('discards irreversibly, updates river/hand, and preserves 136 tiles', () => {
+  it('discards irreversibly, advances turn while wall remains, and preserves 136 tiles', () => {
     const before = start(SEED);
     const seat = before.dealer;
     const tileId = before.seats[seat].drawn!.id;
     const { state, events } = applyCommand(before, { type: 'Discard', seat, tileId });
 
     expect(events).toEqual([{ type: 'TileDiscarded', seat, tile: expect.objectContaining({ id: tileId }) }]);
-    expect(state.phase).toBe('discard_complete');
+    expect(state.phase).toBe('awaiting_discard');
+    expect(state.turn).toBe(((seat + 1) % 4) as Seat);
     expect(state.seats[seat].river.map((t) => t.id)).toEqual([tileId]);
     expect(state.seats[seat].drawn).toBeNull();
     expect(state.seats[seat].hand).toHaveLength(13);
     expect(totalTileCount(state)).toBe(FULL_SET_SIZE);
 
-    expect(() => applyCommand(state, { type: 'Discard', seat, tileId })).toThrow(/not allowed/);
+    expect(() => applyCommand(state, { type: 'Discard', seat, tileId })).toThrow(/cannot discard/);
   });
 
   it('allows discarding a sorted hand tile and folds the previous draw back in', () => {
@@ -125,9 +126,7 @@ describe('draw placement and discard', () => {
   });
 
   it('draws for a non-dealer turn so the new tile sits on the right', () => {
-    // Force a path: start, dealer discards, then next seat draws.
-    // For this ticket the core stops after first discard; exercise ensureDrawn on a synthetic mid-hand.
-    let state = start(SEED);
+    const state = start(SEED);
     const dealer = state.dealer;
     const { state: afterDiscard } = applyCommand(state, {
       type: 'Discard',
@@ -135,13 +134,7 @@ describe('draw placement and discard', () => {
       tileId: state.seats[dealer].drawn!.id,
     });
 
-    // Manually reopen turn for next seat to unit-test draw placement (full loop is WUF-52).
-    state = {
-      ...afterDiscard,
-      phase: 'awaiting_discard',
-      turn: ((dealer + 1) % 4) as Seat,
-    };
-    const { state: drawnState, events } = ensureDrawn(state);
+    const { state: drawnState, events } = ensureDrawn(afterDiscard);
     const seat = drawnState.turn;
     expect(events[0]?.type).toBe('TileDrawn');
     expect(displayHand(drawnState.seats[seat]).at(-1)).toEqual(drawnState.seats[seat].drawn);

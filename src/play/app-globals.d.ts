@@ -8,6 +8,10 @@ declare global {
       snapshot: () => PlaySessionSnapshot;
       clickTile: (tileId: string) => void;
       discardByDrag: (tileId: string) => void;
+      autoPlayToDraw: () => void;
+      claimWin: () => void;
+      passWin: () => void;
+      startNextHand: (seed: number) => void;
     };
   }
 }

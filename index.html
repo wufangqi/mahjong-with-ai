@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>AI 爽胡麻将 · 发牌摸打</title>
+<title>AI 爽胡麻将 · 整局流局</title>
 </head>
 <body class="play">
   <canvas id="c" data-testid="table-canvas"></canvas>
 
   <header>
     <h1>AI 爽胡麻将</h1>
-    <p>发牌 · 摸牌 · 出牌（WUF-51）</p>
+    <p>摸打循环 · 流局结算（WUF-52）</p>
   </header>
 
   <div id="hud">
@@ -24,6 +24,22 @@
 
   <div id="status" data-testid="status">加载中…</div>
   <div id="meta" data-testid="meta"></div>
+
+  <div id="response-bar" data-testid="response-bar" hidden>
+    <button id="claim-win" data-testid="claim-win" type="button">胡</button>
+    <button id="pass-win" data-testid="pass-win" type="button">过</button>
+  </div>
+
+  <div id="draw-panel" data-testid="draw-panel" hidden>
+    <div class="draw-panel-inner">
+      <h2>流局</h2>
+      <p class="draw-summary">不计番 · 不产生分数 · 下一局庄家不变</p>
+      <div id="draw-seats" data-testid="draw-seats" class="draw-seats"></div>
+      <div class="draw-actions">
+        <button id="next-hand" data-testid="next-hand" type="button">下一局</button>
+      </div>
+    </div>
+  </div>
 
   <div id="hint">单击选牌 · 再点确认出牌 · 或拖入前方牌河</div>
 
