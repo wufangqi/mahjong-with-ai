@@ -1,5 +1,7 @@
 import './styles.css';
-import './preview/scene';
+import { bootPlayApp } from './play/app';
+
+bootPlayApp();
 
 window.setTimeout(() => {
   if (!document.body.classList.contains('ready')) {

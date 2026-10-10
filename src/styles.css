@@ -1,8 +1,10 @@
-:root { --gold: #f5c46a; --red: #e0353f; }
+:root { --gold: #f5c46a; --red: #e0353f; --felt: #0d5a3c; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #140a22; color: #f3e9d2;
   font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+body.play { background: #0b1a14; }
 #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; transition: filter .25s ease; cursor: grab; touch-action: none; }
+body.play #c { cursor: default; }
 #c.dragging { cursor: grabbing; }
 #c.slowmo { filter: saturate(.35) contrast(1.15) brightness(.9); }
 #vignette { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .3s;
@@ -31,6 +33,21 @@ header p { margin: 6px 0 0; font-size: 13px; opacity: .65; letter-spacing: 1px; 
 #mute { position: fixed; top: 18px; right: 20px; cursor: pointer; background: rgba(0,0,0,.4); color: #f3e9d2;
   border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 7px 12px; font-family: inherit; font-size: 13px; }
 #hint { position: fixed; right: 20px; bottom: 14px; font-size: 12px; opacity: .45; pointer-events: none; }
+#hint a { color: var(--gold); pointer-events: auto; }
+
+#hud { position: fixed; left: 22px; top: 78px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; z-index: 2; }
+.seed-field { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.18);
+  border-radius: 10px; padding: 6px 10px; font-size: 13px; }
+.seed-field input { width: 96px; background: transparent; border: 0; color: #fff3d6; font: inherit; outline: none; }
+#start { cursor: pointer; border: 1px solid rgba(245,196,106,.55); color: #fff3d6; font: inherit; letter-spacing: 1px;
+  padding: 9px 16px; border-radius: 10px; background: linear-gradient(180deg, rgba(40,70,50,.9), rgba(12,28,20,.95)); }
+#start:hover { border-color: var(--gold); }
+.preview-link { color: #d9c48a; font-size: 13px; text-decoration: none; opacity: .8; }
+.preview-link:hover { opacity: 1; text-decoration: underline; }
+#status { position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%); z-index: 2;
+  background: rgba(0,0,0,.45); border: 1px solid rgba(245,196,106,.35); border-radius: 12px;
+  padding: 10px 18px; font-size: 15px; letter-spacing: 1px; max-width: 90vw; text-align: center; }
+#meta { position: fixed; left: 22px; top: 128px; font-size: 13px; opacity: .75; z-index: 2; letter-spacing: .5px; }
 
 #banner { position: fixed; left: 50%; top: 13%; transform: translateX(-50%); text-align: center; pointer-events: none; opacity: 0; }
 #banner .main { font-family: "STKaiti", "KaiTi", "Kaiti SC", "Noto Serif CJK SC", serif; font-weight: 900; line-height: 1; white-space: nowrap; }

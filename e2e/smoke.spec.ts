@@ -1,7 +1,38 @@
 import { expect, test } from '@playwright/test';
 
-test('production preview boots and plays fixed basic win', async ({ page }) => {
+test('play mode deals a seeded hand and confirms a player discard', async ({ page }) => {
   await page.goto('./');
+  await expect(page.locator('header h1')).toHaveText('AI 爽胡麻将');
+  await expect(page.locator('#c')).toBeVisible();
+
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+
+  await page.getByTestId('seed-input').fill('42');
+  await page.getByTestId('start-hand').click();
+
+  await expect(page.getByTestId('status')).toContainText('出牌');
+  await expect(page.getByTestId('meta')).toContainText('实体牌 136/136');
+
+  const discarded = await page.evaluate(() => {
+    const snap = window.__play!.snapshot();
+    const drawn = snap.state!.seats[0].drawn!;
+    window.__play!.clickTile(drawn.id);
+    window.__play!.clickTile(drawn.id);
+    return { id: drawn.id, status: window.__play!.snapshot().status };
+  });
+
+  expect(discarded.status).toBe('complete');
+  await expect(page.getByTestId('status')).toContainText('不可撤销');
+
+  const riverTail = await page.evaluate(() => {
+    const river = window.__play!.snapshot().state!.seats[0].river;
+    return river[river.length - 1]?.id ?? null;
+  });
+  expect(riverTail).toBe(discarded.id);
+});
+
+test('effect preview still boots and plays fixed basic win', async ({ page }) => {
+  await page.goto('./preview.html');
   await expect(page.locator('header h1')).toHaveText('AI 爽胡麻将');
   await expect(page.locator('#c')).toBeVisible();
 

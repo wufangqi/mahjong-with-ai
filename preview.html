@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>AI 爽胡麻将 · 效果预览</title>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="vignette"></div>
+  <div id="flash"></div>
+
+  <header>
+    <h1>AI 爽胡麻将</h1>
+    <p>正式应用效果预览 · 固定输入可播放 basic 场面（可与只读效果原型人工对照）</p>
+  </header>
+  <button id="mute" type="button">🔊 音效开</button>
+
+  <div id="banner"><div class="main">胡</div><div id="banner-sub"></div></div>
+
+  <div id="controls">
+    <button type="button" data-fx="basic" data-testid="play-basic">基础胡<small>平胡 · 固定手牌预览</small></button>
+    <button type="button" data-fx="big">大牌胡（如清一色）<small>聚拢 · 光柱 · 涟漪</small></button>
+    <button type="button" data-fx="top">顶级胡（如国士）<small>慢动作 · 光粒成字</small></button>
+  </div>
+  <div id="hint">拖动环顾 · 再次点击可打断并重播 · <a href="./">返回牌局</a></div>
+
+  <div id="error"><div>
+    <h2>WebGL 不可用或加载失败</h2>
+    <p>本应用需要支持 WebGL2 的桌面浏览器。请使用开发服务器或生产静态构建打开，不要直接用 file:// 打开。</p>
+  </div></div>
+
+  <script type="module" src="/src/preview/main.ts"></script>
+</body>
+</html>

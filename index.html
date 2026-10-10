@@ -3,31 +3,33 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>AI 爽胡麻将 · 效果预览</title>
+<title>AI 爽胡麻将 · 发牌摸打</title>
 </head>
-<body>
-  <canvas id="c"></canvas>
-  <div id="vignette"></div>
-  <div id="flash"></div>
+<body class="play">
+  <canvas id="c" data-testid="table-canvas"></canvas>
 
   <header>
     <h1>AI 爽胡麻将</h1>
-    <p>正式应用效果预览 · 固定输入可播放 basic 场面（可与只读效果原型人工对照）</p>
+    <p>发牌 · 摸牌 · 出牌（WUF-51）</p>
   </header>
-  <button id="mute" type="button">🔊 音效开</button>
 
-  <div id="banner"><div class="main">胡</div><div id="banner-sub"></div></div>
-
-  <div id="controls">
-    <button type="button" data-fx="basic" data-testid="play-basic">基础胡<small>平胡 · 固定手牌预览</small></button>
-    <button type="button" data-fx="big">大牌胡（如清一色）<small>聚拢 · 光柱 · 涟漪</small></button>
-    <button type="button" data-fx="top">顶级胡（如国士）<small>慢动作 · 光粒成字</small></button>
+  <div id="hud">
+    <label class="seed-field">
+      <span>种子</span>
+      <input id="seed" data-testid="seed-input" type="number" value="42" />
+    </label>
+    <button id="start" data-testid="start-hand" type="button">开始一局</button>
+    <a class="preview-link" href="./preview.html">效果预览</a>
   </div>
-  <div id="hint">拖动环顾 · 再次点击可打断并重播</div>
+
+  <div id="status" data-testid="status">加载中…</div>
+  <div id="meta" data-testid="meta"></div>
+
+  <div id="hint">单击选牌 · 再点确认出牌 · 或拖入前方牌河</div>
 
   <div id="error"><div>
     <h2>WebGL 不可用或加载失败</h2>
-    <p>本应用需要支持 WebGL2 的桌面浏览器。请使用开发服务器或生产静态构建打开，不要直接用 file:// 打开。</p>
+    <p>本应用需要支持 WebGL2 的桌面浏览器。请使用开发服务器或生产静态构建打开。</p>
   </div></div>
 
   <script type="module" src="/src/main.ts"></script>
