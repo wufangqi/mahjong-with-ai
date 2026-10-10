@@ -1,7 +1,15 @@
 // 特效基础组件：粒子池、光柱、涟漪、字形采样
 import * as THREE from 'three';
+import { createParticleSystem } from '../particles/particleSystem';
+import type { ParticleSystem } from '../particles/types';
+import type { ParticleBackend } from '../quality/types';
 
-const pointsVS = /* glsl */ `
+export const pointUniforms = { uScale: { value: 400 } };
+
+export function makePointsMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: pointUniforms,
+    vertexShader: /* glsl */ `
 attribute vec3 aColor;
 attribute float aSize;
 attribute float aAlpha;
@@ -13,8 +21,8 @@ void main() {
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_PointSize = aSize * uScale / -mv.z;
   gl_Position = projectionMatrix * mv;
-}`;
-const pointsFS = /* glsl */ `
+}`,
+    fragmentShader: /* glsl */ `
 varying vec3 vColor;
 varying float vAlpha;
 void main() {
@@ -23,15 +31,7 @@ void main() {
   float a = smoothstep(0.5, 0.0, d); a *= a;
   float core = smoothstep(0.14, 0.0, d);
   gl_FragColor = vec4(vColor * (a + core * 1.6), a * vAlpha);
-}`;
-
-export const pointUniforms = { uScale: { value: 400 } };
-
-export function makePointsMaterial(): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    uniforms: pointUniforms,
-    vertexShader: pointsVS,
-    fragmentShader: pointsFS,
+}`,
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
@@ -54,102 +54,48 @@ export type ParticleEmit = {
   twinkle?: number;
 };
 
+/** Scene particle pool: GPU ShaderMaterial with CPU PointsMaterial fallback. */
 export class ParticlePool {
-  cap: number;
-  cursor = 0;
-  pos: Float32Array;
-  vel: Float32Array;
-  col: Float32Array;
-  size: Float32Array;
-  base: Float32Array;
-  alpha: Float32Array;
-  life: Float32Array;
-  maxLife: Float32Array;
-  grav: Float32Array;
-  drag: Float32Array;
-  twinkle: Float32Array;
-  geo: THREE.BufferGeometry;
-  points: THREE.Points;
-  time = 0;
+  private readonly sys: ParticleSystem;
 
-  constructor(cap = 4000) {
-    this.cap = cap;
-    this.pos = new Float32Array(cap * 3);
-    this.vel = new Float32Array(cap * 3);
-    this.col = new Float32Array(cap * 3);
-    this.size = new Float32Array(cap);
-    this.base = new Float32Array(cap);
-    this.alpha = new Float32Array(cap);
-    this.life = new Float32Array(cap);
-    this.maxLife = new Float32Array(cap);
-    this.grav = new Float32Array(cap);
-    this.drag = new Float32Array(cap);
-    this.twinkle = new Float32Array(cap);
-    const geo = new THREE.BufferGeometry();
-    const mk = (arr: Float32Array, n: number) =>
-      new THREE.BufferAttribute(arr, n).setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute('position', mk(this.pos, 3));
-    geo.setAttribute('aColor', mk(this.col, 3));
-    geo.setAttribute('aSize', mk(this.size, 1));
-    geo.setAttribute('aAlpha', mk(this.alpha, 1));
-    this.geo = geo;
-    this.points = new THREE.Points(geo, makePointsMaterial());
-    this.points.frustumCulled = false;
-    this.points.renderOrder = 5;
+  constructor(
+    cap = 4000,
+    opts?: { preferGpu?: boolean; gpuAvailable?: boolean; budget?: number },
+  ) {
+    this.sys = createParticleSystem({
+      capacity: cap,
+      preferGpu: opts?.preferGpu ?? true,
+      gpuAvailable: opts?.gpuAvailable,
+    });
+    if (opts?.budget != null) this.sys.setBudget(opts.budget);
+  }
+
+  get cap(): number {
+    return this.sys.capacity;
+  }
+
+  get points(): THREE.Points {
+    return this.sys.points;
+  }
+
+  get backend(): ParticleBackend {
+    return this.sys.backend;
+  }
+
+  setBudget(count: number): void {
+    this.sys.setBudget(count);
   }
 
   emit(p: ParticleEmit): void {
-    const i = this.cursor;
-    this.cursor = (this.cursor + 1) % this.cap;
-    const i3 = i * 3;
-    this.pos[i3] = p.x;
-    this.pos[i3 + 1] = p.y;
-    this.pos[i3 + 2] = p.z;
-    this.vel[i3] = p.vx || 0;
-    this.vel[i3 + 1] = p.vy || 0;
-    this.vel[i3 + 2] = p.vz || 0;
-    const c = p.color;
-    this.col[i3] = c[0];
-    this.col[i3 + 1] = c[1];
-    this.col[i3 + 2] = c[2];
-    this.base[i] = p.size ?? 0.15;
-    this.life[i] = this.maxLife[i] = p.life ?? 1;
-    this.grav[i] = p.gravity ?? -2;
-    this.drag[i] = p.drag ?? 1.2;
-    this.twinkle[i] = p.twinkle ?? 0;
+    this.sys.emit(p);
   }
 
   update(dt: number): void {
-    this.time += dt;
-    for (let i = 0; i < this.cap; i++) {
-      if (this.life[i] <= 0) {
-        this.alpha[i] = 0;
-        this.size[i] = 0;
-        continue;
-      }
-      this.life[i] -= dt;
-      const i3 = i * 3;
-      const k = Math.max(0, 1 - this.drag[i] * dt);
-      this.vel[i3] *= k;
-      this.vel[i3 + 1] = this.vel[i3 + 1] * k + this.grav[i] * dt;
-      this.vel[i3 + 2] *= k;
-      this.pos[i3] += this.vel[i3] * dt;
-      this.pos[i3 + 1] += this.vel[i3 + 1] * dt;
-      this.pos[i3 + 2] += this.vel[i3 + 2] * dt;
-      const r = Math.max(0, this.life[i] / this.maxLife[i]);
-      const tw = this.twinkle[i] ? 0.55 + 0.45 * Math.sin(this.time * 30 + i * 1.7) : 1;
-      this.alpha[i] = Math.min(1, r * 1.6) * tw;
-      this.size[i] = this.base[i] * (0.4 + 0.6 * r);
-    }
-    for (const n of ['position', 'aColor', 'aSize', 'aAlpha'] as const) {
-      this.geo.attributes[n].needsUpdate = true;
-    }
+    this.sys.update(dt);
   }
 
   clear(): void {
-    this.life.fill(0);
-    this.alpha.fill(0);
-    this.size.fill(0);
+    this.sys.clear();
   }
 }
 

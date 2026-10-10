@@ -1,5 +1,8 @@
 import { FULL_SET_SIZE, PLAYER_SEAT, totalTileCount, type Seat } from '../core';
 import { PlaySession } from '../game/session';
+import { probeFromRenderer } from '../particles/probe';
+import { QualityController } from '../quality/qualityController';
+import { isQualityTier, type QualityTier } from '../quality/types';
 import { listThemeOptions, loadTheme } from '../theme/catalog';
 import { ThemeManager } from '../theme/themeManager';
 import { isThemeId } from '../theme/schema';
@@ -51,6 +54,7 @@ export function bootPlayApp(): void {
   const metaEl = mustEl<HTMLElement>('meta');
   const startBtn = mustEl<HTMLButtonElement>('start');
   const themeSelect = mustEl<HTMLSelectElement>('theme-select');
+  const qualitySelect = mustEl<HTMLSelectElement>('quality-select');
   const themeNotice = mustEl<HTMLElement>('theme-notice');
   const responseBar = mustEl<HTMLElement>('response-bar');
   const claimWinBtn = mustEl<HTMLButtonElement>('claim-win');
@@ -77,16 +81,48 @@ export function bootPlayApp(): void {
   const session = new PlaySession();
   const table = new TableView(canvas);
   const scenes = new WinSceneScheduler();
+  const storage = browserStorage();
   const themes = new ThemeManager({
-    storage: browserStorage(),
+    storage,
     now: () => performance.now(),
     schedule: (fn, ms) => {
       window.setTimeout(fn, ms);
     },
     loadTheme,
   });
+  const quality = new QualityController({ storage });
+  quality.restore();
+  const gpuProbe = probeFromRenderer(table.renderer);
   let lastHandWonEventCount = 0;
   let sceneReleaseTimer: number | null = null;
+  let lastFrameAt = performance.now();
+  let fpsEma = 60;
+
+  const applyQualityToTable = (): void => {
+    table.applyQuality(quality.getSettings(), {
+      gpuParticlesAvailable: gpuProbe.gpuParticlesAvailable,
+    });
+  };
+
+  const syncQualityChrome = (): void => {
+    qualitySelect.value = quality.getMode() === 'manual' ? quality.getTier() : 'auto';
+    document.body.dataset.quality = quality.getTier();
+  };
+
+  const measureInitialFps = (): Promise<number> =>
+    new Promise((resolve) => {
+      let frames = 0;
+      const start = performance.now();
+      const sample = (now: number): void => {
+        frames += 1;
+        if (now - start >= 400) {
+          resolve((frames * 1000) / Math.max(1, now - start));
+          return;
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
 
   themeSelect.replaceChildren();
   for (const opt of listThemeOptions()) {
@@ -332,14 +368,25 @@ export function bootPlayApp(): void {
     })();
   });
 
+  const startNewGame = (seed: number): void => {
+    lastHandWonEventCount = 0;
+    quality.endGame();
+    if (quality.getMode() === 'auto') {
+      quality.selectInitial(gpuProbe, fpsEma);
+      applyQualityToTable();
+      syncQualityChrome();
+    }
+    quality.beginGame();
+    session.start(seed);
+  };
+
   startBtn.addEventListener('click', () => {
     const seed = Number.parseInt(seedInput.value, 10);
     if (!Number.isFinite(seed)) {
       statusEl.textContent = '请输入有效数字种子';
       return;
     }
-    lastHandWonEventCount = 0;
-    session.start(seed);
+    startNewGame(seed);
   });
 
   claimWinBtn.addEventListener('click', () => session.claimWin());
@@ -406,15 +453,42 @@ export function bootPlayApp(): void {
 
   const frame = (): void => {
     requestAnimationFrame(frame);
+    const now = performance.now();
+    const dt = Math.min(100, now - lastFrameAt);
+    lastFrameAt = now;
+    const fps = dt > 0 ? 1000 / dt : fpsEma;
+    fpsEma = fpsEma * 0.9 + fps * 0.1;
+    const changed = quality.recordFrame(dt, fpsEma);
+    if (changed) {
+      applyQualityToTable();
+      syncQualityChrome();
+    }
     table.render();
   };
   frame();
 
+  qualitySelect.addEventListener('change', () => {
+    const value = qualitySelect.value;
+    if (value === 'auto') {
+      quality.setAuto();
+      void measureInitialFps().then((measured) => {
+        quality.selectInitial(gpuProbe, measured);
+        applyQualityToTable();
+        syncQualityChrome();
+      });
+      return;
+    }
+    if (isQualityTier(value)) {
+      quality.setManual(value);
+      applyQualityToTable();
+      syncQualityChrome();
+    }
+  });
+
   window.__play = {
     ready: false,
     start: (seed: number) => {
-      lastHandWonEventCount = 0;
-      session.start(seed);
+      startNewGame(seed);
     },
     snapshot: () => session.snapshot(),
     clickTile: (tileId: string) => session.clickTile(tileId),
@@ -450,11 +524,52 @@ export function bootPlayApp(): void {
     themeRefCount: (id: ThemeId) => themes.getRefCount(id),
     themeRetained: (id: ThemeId) => themes.isRetained(id),
     ambientParticleKind: () => table.ambientParticleKind(),
+    ambientParticleBackend: () => table.ambientParticleBackend(),
     tileBackPattern: () => table.tileBackPattern(),
+    qualityTier: () => quality.getTier(),
+    qualityMode: () => quality.getMode(),
+    qualitySettings: () => table.qualitySettings(),
+    setQuality: (tier: QualityTier | 'auto') => {
+      if (tier === 'auto') {
+        quality.setAuto();
+        quality.selectInitial(gpuProbe, fpsEma);
+      } else {
+        quality.setManual(tier);
+      }
+      applyQualityToTable();
+      syncQualityChrome();
+      return quality.getTier();
+    },
+    pinAutoQuality: (tier: QualityTier) => {
+      quality.pinAutoTier(tier);
+      applyQualityToTable();
+      syncQualityChrome();
+      return quality.getTier();
+    },
+    beginQualityGame: () => {
+      quality.beginGame();
+    },
+    endQualityGame: () => {
+      quality.endGame();
+    },
+    injectFpsSample: (dtMs: number, fps: number) => {
+      const changed = quality.recordFrame(dtMs, fps);
+      if (changed) applyQualityToTable();
+      syncQualityChrome();
+      return changed;
+    },
+    gpuProbe: () => ({ ...gpuProbe }),
   };
 
-  void themes.start().then(() => {
+  void themes.start().then(async () => {
     applyActiveTheme();
+    const measured = await measureInitialFps();
+    if (quality.getMode() === 'auto') {
+      quality.selectInitial(gpuProbe, measured);
+    }
+    applyQualityToTable();
+    syncQualityChrome();
+    quality.beginGame();
     document.body.classList.add('ready');
     if (window.__play) window.__play.ready = true;
     session.start(DEFAULT_SEED);

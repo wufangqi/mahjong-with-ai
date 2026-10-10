@@ -1,4 +1,5 @@
 import type { PlaySessionSnapshot } from '../game/session';
+import type { GpuProbeInfo, QualityMode, QualitySettings, QualityTier } from '../quality/types';
 import type { ThemeId, ThemeModules, ThemePalette, ThemeSelectResult } from '../theme/types';
 import type { WinScenePlan } from './winPresentation';
 
@@ -28,7 +29,17 @@ declare global {
       themeRefCount: (id: ThemeId) => number;
       themeRetained: (id: ThemeId) => boolean;
       ambientParticleKind: () => 'dust' | 'petals' | null;
+      ambientParticleBackend: () => 'gpu' | 'cpu' | null;
       tileBackPattern: () => 'solid' | 'cloud';
+      qualityTier: () => QualityTier;
+      qualityMode: () => QualityMode;
+      qualitySettings: () => QualitySettings;
+      setQuality: (tier: QualityTier | 'auto') => QualityTier;
+      pinAutoQuality: (tier: QualityTier) => QualityTier;
+      beginQualityGame: () => void;
+      endQualityGame: () => void;
+      injectFpsSample: (dtMs: number, fps: number) => QualityTier | null;
+      gpuProbe: () => GpuProbeInfo;
     };
   }
 }
