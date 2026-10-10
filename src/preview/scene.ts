@@ -12,6 +12,8 @@ import { sfx, stopAll as stopAudio, setMuted, isMuted } from './audio';
 import { createHeavenCourt } from './court';
 import { FIXED_HANDS, type HandName } from './fixedHands';
 import { timelineFor } from './timelines';
+import { applyPreviewTheme } from './applyPreviewTheme';
+import { getPreviewThemeId, getPreviewThemeModules } from './themeBridge';
 
 const visualCfg = getPreparedVisualConfig();
 const VIEW_W = visualCfg?.enabled ? visualCfg.width : window.innerWidth;
@@ -50,14 +52,14 @@ function updateCamBase() {
   camera.fov = aspect < 0.85 ? 72 : 60;
   camera.updateProjectionMatrix();
   camBase.copy(EYE);
-  if (scene.fog instanceof THREE.Fog) { scene.fog.near = 38; scene.fog.far = 110; }
 }
 updateCamBase();
 camera.position.copy(camBase);
 camera.lookAt(CAM_TARGET);
 
-// 灯光
-scene.add(new THREE.HemisphereLight(0xffe2b8, 0x3a2430, 0.72));
+// 灯光（初始值随后由 ThemeManager 覆盖）
+const hemi = new THREE.HemisphereLight(0xffe2b8, 0x3a2430, 0.72);
+scene.add(hemi);
 const key = new THREE.DirectionalLight(0xfff1dc, 1.7);
 key.position.set(3, 10, 6);
 key.castShadow = true;
@@ -71,26 +73,6 @@ const fxLight = new THREE.PointLight(0xffd27a, 0, 14, 2); // 特效时点亮
 fxLight.position.set(0, 2.5, 0.5); scene.add(fxLight);
 
 // ---------------- 牌桌 ----------------
-function feltTexture(): THREE.CanvasTexture {
-  const S = 1024, c = document.createElement('canvas'); c.width = c.height = S;
-  const ctx = c.getContext('2d');
-  if (!ctx) throw new Error('2D canvas unavailable');
-  const g = ctx.createRadialGradient(S / 2, S / 2, 60, S / 2, S / 2, S * 0.72);
-  g.addColorStop(0, '#13684a'); g.addColorStop(0.6, '#0b4a34'); g.addColorStop(1, '#062a1e');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
-  const img = ctx.getImageData(0, 0, S, S), d = img.data;
-  for (let i = 0; i < d.length; i += 4) { const n = (visualRandom() - 0.5) * 18; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
-  ctx.putImageData(img, 0, 0);
-  // 中央装饰金圈
-  ctx.strokeStyle = 'rgba(214,176,96,.35)'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.arc(S / 2, S / 2, 150, 0, Math.PI * 2); ctx.stroke();
-  ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(S / 2, S / 2, 165, 0, Math.PI * 2); ctx.stroke();
-  ctx.fillStyle = 'rgba(214,176,96,.16)';
-  ctx.font = `900 150px ${FONT_SERIF}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('雀', S / 2, S / 2 + 6);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
-  return t;
-}
 function woodTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas'); c.width = 512; c.height = 64;
   const ctx = c.getContext('2d');
@@ -107,7 +89,8 @@ function woodTexture(): THREE.CanvasTexture {
   return t;
 }
 const TW = 15, TD = 11;
-const felt = new THREE.Mesh(new THREE.PlaneGeometry(TW, TD), new THREE.MeshStandardMaterial({ map: feltTexture(), roughness: 0.95 }));
+const feltMat = new THREE.MeshStandardMaterial({ roughness: 0.95 });
+const felt = new THREE.Mesh(new THREE.PlaneGeometry(TW, TD), feltMat);
 felt.rotation.x = -Math.PI / 2; felt.receiveShadow = true; scene.add(felt);
 const woodMat = new THREE.MeshStandardMaterial({ map: woodTexture(), roughness: 0.42, metalness: 0.22, color: 0xc46a48 });
 const R = 0.55, RH = 0.3;
@@ -118,6 +101,9 @@ for (const [w, d, x, z] of [[TW + 2 * R, R, 0, -(TD + R) / 2], [TW + 2 * R, R, 0
 const body = new THREE.Mesh(new THREE.BoxGeometry(TW + 2 * R, 1.2, TD + 2 * R), woodMat);
 body.position.y = -0.61; scene.add(body);
 const court = createHeavenCourt(scene);
+
+// ThemeManager modules → WebGL felt / sky / fog / lights / tile back / banner CSS
+applyPreviewTheme(getPreviewThemeModules(), { scene, feltMat, woodMat, hemi, key }, getPreviewThemeId());
 
 // 四面牌墙（装饰，背面朝上）
 {
@@ -766,6 +752,8 @@ window.__app = {
 window.__visual = {
   ready: false,
   config: visualCfg,
+  themeId: () => getPreviewThemeId(),
+  themeApplied: () => getPreviewThemeModules(),
   sceneTimeMs: () => sceneTime * 1000,
   seekToMs,
   playTier: (tier) => {

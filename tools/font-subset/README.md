@@ -27,4 +27,4 @@ python3 -m venv .tools-venv
 
 Keep `src/fonts/OFL.txt` with the SIL OFL 1.1 text from the upstream package.
 
-Offline 「胡」 glyph lattice: `tools/glyph/generate-hu.mjs` (or the pillow snippet used at first generation) writes `src/fonts/glyph-hu.json`.
+Offline 「胡」 glyph lattice: `tools/glyph/generate-hu.py` writes `src/fonts/glyph-hu.json`.

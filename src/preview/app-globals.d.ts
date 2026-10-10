@@ -1,4 +1,5 @@
 import type { HandName } from './fixedHands';
+import type { ThemeId, ThemeModules } from '../theme/types';
 import type { VisualConfig, VisualTier } from '../visual/config';
 
 type EffectName = Exclude<HandName, 'idle'>;
@@ -26,6 +27,8 @@ declare global {
     __visual?: {
       ready: boolean;
       config: VisualConfig | null;
+      themeId: () => ThemeId;
+      themeApplied: () => ThemeModules;
       sceneTimeMs: () => number;
       seekToMs: (ms: number) => void;
       playTier: (tier: VisualTier) => void;

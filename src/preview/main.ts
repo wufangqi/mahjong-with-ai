@@ -2,17 +2,19 @@ import '../fonts/fonts.css';
 import '../styles.css';
 import { loadGameFonts } from '../fonts/loadFonts';
 import { prepareVisualMode } from '../visual/prepare';
+import { preparePreviewTheme } from './themeBridge';
 
 async function main(): Promise<void> {
-  prepareVisualMode();
+  const visual = prepareVisualMode();
   try {
     await loadGameFonts();
+    await preparePreviewTheme(visual.theme);
   } catch (err) {
     console.error(err);
     document.body.classList.add('failed');
     return;
   }
-  // Scene module draws tile faces at import time — fonts must already be ready.
+  // Scene draws themed felt/tiles at import — fonts + ThemeManager must already be ready.
   await import('./scene');
 }
 

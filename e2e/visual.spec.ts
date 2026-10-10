@@ -12,7 +12,7 @@ const TIERS = [
  * Deterministic three-tier visual preview.
  * Baselines live under e2e/visual.spec.ts-snapshots/.
  * Updating requires explicit human confirmation:
- *   UPDATE_VISUAL_BASELINES=1 npm run test:visual -- --update-snapshots
+ *   UPDATE_VISUAL_BASELINES=1 npm run test:visual:update
  */
 for (const { tier, captureAt } of TIERS) {
   test(`visual ${tier} frame @ ${captureAt}ms`, async ({ page }) => {
@@ -32,7 +32,15 @@ for (const { tier, captureAt } of TIERS) {
     await page.waitForFunction(() => document.body.dataset.captureReady === '1', null, {
       timeout: 60_000,
     });
-    // Full-page capture of the fixed viewport (canvas is edge-to-edge).
+    const theme = await page.evaluate(() => ({
+      id: window.__visual!.themeId(),
+      glyph: window.__visual!.themeApplied().mark.glyph,
+      felt: window.__visual!.themeApplied().table.felt,
+    }));
+    expect(theme.id).toBe('classic-green');
+    expect(theme.glyph).toBe('雀');
+    expect(theme.felt).toBe(0x0d5a3c);
+
     await expect(page).toHaveScreenshot(`${tier}.png`, {
       maxDiffPixelRatio: 0.03,
       animations: 'disabled',
@@ -40,6 +48,43 @@ for (const { tier, captureAt } of TIERS) {
     });
   });
 }
+
+test('visual harness applies court-palace ThemeManager modules to the WebGL scene', async ({ page }) => {
+  await page.setViewportSize(VIEW);
+  const qs = new URLSearchParams({
+    visual: '1',
+    tier: 'basic',
+    seed: '1',
+    width: String(VIEW.width),
+    height: String(VIEW.height),
+    dpr: '1',
+    theme: 'court-palace',
+    captureAt: '1200',
+    stepMs: '16.666',
+  });
+  await page.goto(`./preview.html?${qs.toString()}`);
+  await page.waitForFunction(() => document.body.dataset.captureReady === '1', null, {
+    timeout: 60_000,
+  });
+  const theme = await page.evaluate(() => ({
+    id: window.__visual!.themeId(),
+    glyph: window.__visual!.themeApplied().mark.glyph,
+    felt: window.__visual!.themeApplied().table.felt,
+    tileBack: window.__visual!.themeApplied().tileBack.pattern,
+    bodyTheme: document.body.dataset.theme,
+  }));
+  expect(theme.id).toBe('court-palace');
+  expect(theme.glyph).toBe('福');
+  expect(theme.felt).toBe(0x8b1e2d);
+  expect(theme.tileBack).toBe('cloud');
+  expect(theme.bodyTheme).toBe('court-palace');
+
+  await expect(page).toHaveScreenshot('basic-court-palace.png', {
+    maxDiffPixelRatio: 0.03,
+    animations: 'disabled',
+    timeout: 15_000,
+  });
+});
 
 test('visual harness exposes fixed config on window.__visual', async ({ page }) => {
   await page.setViewportSize(VIEW);
@@ -54,4 +99,6 @@ test('visual harness exposes fixed config on window.__visual', async ({ page }) 
   expect(cfg?.dpr).toBe(1);
   expect(cfg?.theme).toBe('classic-green');
   expect(cfg?.captureAt).toBe(500);
+  const applied = await page.evaluate(() => window.__visual!.themeApplied().mark.glyph);
+  expect(applied).toBe('雀');
 });
