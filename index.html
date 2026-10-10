@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>AI 爽胡麻将 · 整局流局</title>
+<title>AI 爽胡麻将 · 吃碰响应</title>
 </head>
 <body class="play">
   <canvas id="c" data-testid="table-canvas"></canvas>
 
   <header>
     <h1>AI 爽胡麻将</h1>
-    <p>摸打循环 · 流局结算（WUF-52）</p>
+    <p>吃 · 碰 · 过 · 行牌（WUF-54）</p>
   </header>
 
   <div id="hud">
@@ -27,7 +27,9 @@
 
   <div id="response-bar" data-testid="response-bar" hidden>
     <button id="claim-win" data-testid="claim-win" type="button">胡</button>
-    <button id="pass-win" data-testid="pass-win" type="button">过</button>
+    <button id="claim-pung" data-testid="claim-pung" type="button">碰</button>
+    <div id="chow-options" data-testid="chow-options" class="chow-options"></div>
+    <button id="pass-win" data-testid="pass-response" type="button">过</button>
   </div>
 
   <div id="draw-panel" data-testid="draw-panel" hidden>

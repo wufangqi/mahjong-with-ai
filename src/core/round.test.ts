@@ -30,10 +30,10 @@ function playToTerminal(seed: number): HandState {
       return state;
     }
 
-    if (state.phase === 'awaiting_win_response') {
+    if (state.phase === 'awaiting_win_response' || state.phase === 'awaiting_claim_response') {
       const pending = [...(state.responseWindow?.pending ?? [])];
       for (const seat of pending) {
-        // Always pass here so this helper exercises the 流局 path; ClaimWin is covered elsewhere.
+        // Always pass here so this helper exercises the 流局 path; claims/wins are covered elsewhere.
         ({ state } = applyCommand(state, { type: 'Pass', seat }));
       }
       continue;
@@ -63,7 +63,8 @@ describe('full round without mid-hand responses', () => {
     expect(state.settlement!.dealer).toBe(state.dealer);
 
     for (const info of state.settlement!.seats) {
-      expect(info.hand).toHaveLength(13);
+      const melds = state.seats[info.seat].melds.length;
+      expect(info.hand.length + melds * 3).toBe(13);
       expect(info.ready).toBe(info.waitingTiles.length > 0);
     }
   });
@@ -95,7 +96,15 @@ describe('full round without mid-hand responses', () => {
 
   it('opens win-only responses after the final discard', () => {
     let { state } = applyCommand(null, { type: 'StartHand', seed: 3 });
-    while (state.phase === 'awaiting_discard') {
+    for (let guard = 0; guard < 200; guard++) {
+      if (state.phase === 'awaiting_win_response') break;
+      if (state.phase === 'awaiting_claim_response') {
+        for (const seat of [...(state.responseWindow?.pending ?? [])]) {
+          ({ state } = applyCommand(state, { type: 'Pass', seat }));
+        }
+        continue;
+      }
+      if (state.phase !== 'awaiting_discard') throw new Error(`unexpected ${state.phase}`);
       state = ensureDrawn(state).state;
       const seat = state.turn;
       const tileId = pickFirstLegal(state, seat);
@@ -110,16 +119,22 @@ describe('full round without mid-hand responses', () => {
       }
     }
     expect(state.phase).toBe('awaiting_win_response');
+    expect(state.responseWindow?.mode).toBe('win_only');
   });
 });
 
 describe('final win response', () => {
-  it('records HandWon when a seat claims a legal win on the final discard', () => {
-    // Construct a synthetic final window: seat 1 has a ready hand; seat 0 discards the winning tile.
+  it('rejects illegal ClaimWin and accepts Pass in the final window', () => {
     let { state } = applyCommand(null, { type: 'StartHand', seed: 1, dealer: PLAYER_SEAT });
-    // Burn the wall with first-legal play until win response, then force a win via Pass all
-    // is covered above; here we only assert ClaimWin rejects illegal and Pass works mid-window.
-    while (state.phase === 'awaiting_discard') {
+    for (let guard = 0; guard < 200; guard++) {
+      if (state.phase === 'awaiting_win_response') break;
+      if (state.phase === 'awaiting_claim_response') {
+        for (const seat of [...(state.responseWindow?.pending ?? [])]) {
+          ({ state } = applyCommand(state, { type: 'Pass', seat }));
+        }
+        continue;
+      }
+      if (state.phase !== 'awaiting_discard') throw new Error(`unexpected ${state.phase}`);
       state = ensureDrawn(state).state;
       const seat = state.turn;
       ({ state } = applyCommand(state, { type: 'Discard', seat, tileId: pickFirstLegal(state, seat) }));

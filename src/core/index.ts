@@ -1,11 +1,21 @@
 export {
+  canChowFrom,
+  listChowOptions,
+  nearestAfter,
+  nextSeat,
+  type ChowOption,
+  type LegalClaims,
+} from './claims';
+export {
   applyCommand,
   buildExhaustiveDrawSettlement,
   canWinOnDiscard,
   displayHand,
   ensureDrawn,
+  legalClaims,
   legalDiscardTileIds,
   PLAYER_SEAT,
+  seatHasClaimOptions,
   totalTileCount,
 } from './hand';
 export { createRng, shuffleInPlace } from './rng';
@@ -25,9 +35,12 @@ export type {
   ExhaustiveDrawSettlement,
   HandPhase,
   HandState,
+  LockedResponse,
+  Meld,
+  ResponseMode,
   ResponseWindow,
   Seat,
   SeatDrawInfo,
   SeatState,
 } from './types';
-export { isWinningCodes, waitingTileCodes } from './winning';
+export { isWinningCodes, isWinningHand, waitingTileCodes } from './winning';

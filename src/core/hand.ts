@@ -1,3 +1,13 @@
+import {
+  hasAnyClaim,
+  legalClaimsForSeat,
+  listChowOptions,
+  nearestAfter,
+  nextSeat,
+  otherSeats,
+  pendingClaimSeats,
+  pungTileIds,
+} from './claims';
 import { createRng, shuffleInPlace } from './rng';
 import {
   countTilesInPlay,
@@ -13,15 +23,24 @@ import type {
   DomainEvent,
   ExhaustiveDrawSettlement,
   HandState,
+  LockedResponse,
+  Meld,
   Seat,
   SeatState,
 } from './types';
-import { isWinningCodes, waitingTileCodes } from './winning';
+import { isWinningHand, waitingTileCodes } from './winning';
 
 export const PLAYER_SEAT: Seat = 0;
 
 function emptySeat(): SeatState {
-  return { hand: [], drawn: null, river: [] };
+  return { hand: [], drawn: null, river: [], melds: [] };
+}
+
+function cloneMeld(meld: Meld): Meld {
+  return {
+    ...meld,
+    tiles: [...meld.tiles],
+  };
 }
 
 function cloneSeat(seat: SeatState): SeatState {
@@ -29,6 +48,7 @@ function cloneSeat(seat: SeatState): SeatState {
     hand: [...seat.hand],
     drawn: seat.drawn,
     river: [...seat.river],
+    melds: seat.melds.map(cloneMeld),
   };
 }
 
@@ -47,6 +67,7 @@ function cloneState(state: HandState): HandState {
           ...state.responseWindow,
           pending: [...state.responseWindow.pending],
           winners: [...state.responseWindow.winners],
+          locked: { ...state.responseWindow.locked },
         }
       : null,
     settlement: state.settlement
@@ -68,18 +89,19 @@ function asSeat(n: number): Seat {
   throw new Error(`invalid seat ${n}`);
 }
 
-function nextSeat(seat: Seat): Seat {
-  return asSeat((seat + 1) % 4);
-}
-
 function allRegions(state: HandState): PhysicalTile[][] {
   return [
     state.wall,
-    ...state.seats.flatMap((s) => [s.hand, s.drawn ? [s.drawn] : [], s.river]),
+    ...state.seats.flatMap((s) => [
+      s.hand,
+      s.drawn ? [s.drawn] : [],
+      s.river,
+      ...s.melds.map((m) => m.tiles),
+    ]),
   ];
 }
 
-/** Total physical tiles across wall, hands, drawn, and rivers. */
+/** Total physical tiles across wall, hands, drawn, rivers, and melds. */
 export function totalTileCount(state: HandState): number {
   return countTilesInPlay(allRegions(state));
 }
@@ -104,25 +126,33 @@ function visibleHand(seat: SeatState): PhysicalTile[] {
   return seat.drawn ? [...seat.hand, seat.drawn] : [...seat.hand];
 }
 
-function otherSeats(discarder: Seat): Seat[] {
-  return ([0, 1, 2, 3] as Seat[]).filter((s) => s !== discarder);
+function expectedConcealedBeforeDiscard(seat: SeatState): number {
+  // 14 with a draw, or 11 / 8 / 5 after a successful chow/pung (must discard).
+  return 14 - seat.melds.length * 3;
 }
 
 function handCodes(seat: SeatState): TileCode[] {
   return seat.hand.map((t) => t.code);
 }
 
-/** Whether `seat` can win on the given discarded face code (13 concealed + tile). */
+/** Whether `seat` can win on the given discarded face code. */
 export function canWinOnDiscard(state: HandState, seat: Seat, tileCode: TileCode): boolean {
   const seatState = state.seats[seat];
-  if (seatState.drawn || seatState.hand.length !== 13) return false;
-  return isWinningCodes([...handCodes(seatState), tileCode]);
+  if (seatState.drawn) return false;
+  const exposed = seatState.melds.length;
+  const expected = 13 - exposed * 3;
+  if (seatState.hand.length !== expected) return false;
+  return isWinningHand([...handCodes(seatState), tileCode], exposed);
 }
 
 export function buildExhaustiveDrawSettlement(state: HandState): ExhaustiveDrawSettlement {
   const seats = ([0, 1, 2, 3] as Seat[]).map((seat) => {
-    const hand = sortHand([...state.seats[seat].hand]);
-    const waiting = waitingTileCodes(hand.map((t) => t.code));
+    const seatState = state.seats[seat];
+    const hand = sortHand([...seatState.hand]);
+    const waiting = waitingTileCodes(
+      hand.map((t) => t.code),
+      seatState.melds.length,
+    );
     return {
       seat,
       hand,
@@ -202,6 +232,24 @@ function findTileInSeat(seat: SeatState, tileId: string): { where: 'hand' | 'dra
   return null;
 }
 
+function removeHandTiles(seat: SeatState, tileIds: readonly string[]): PhysicalTile[] {
+  const removed: PhysicalTile[] = [];
+  for (const id of tileIds) {
+    const index = seat.hand.findIndex((t) => t.id === id);
+    if (index < 0) throw new Error(`tile ${id} is not in hand`);
+    removed.push(seat.hand.splice(index, 1)[0]!);
+  }
+  seat.hand = sortHand(seat.hand);
+  return removed;
+}
+
+function takeDiscardFromRiver(state: HandState, discarder: Seat, tileId: string): PhysicalTile {
+  const river = state.seats[discarder].river;
+  const index = river.findIndex((t) => t.id === tileId);
+  if (index < 0) throw new Error(`discard ${tileId} is not in seat ${discarder}'s river`);
+  return river.splice(index, 1)[0]!;
+}
+
 function discard(state: HandState, seat: Seat, tileId: string): CommandResult {
   if (state.phase !== 'awaiting_discard') {
     throw new Error('discard is not allowed in the current phase');
@@ -212,8 +260,9 @@ function discard(state: HandState, seat: Seat, tileId: string): CommandResult {
 
   const seatState = state.seats[seat];
   const held = visibleHand(seatState);
-  if (held.length !== 14) {
-    throw new Error(`seat ${seat} must hold 14 tiles to discard, has ${held.length}`);
+  const expected = expectedConcealedBeforeDiscard(seatState);
+  if (held.length !== expected) {
+    throw new Error(`seat ${seat} must hold ${expected} tiles to discard, has ${held.length}`);
   }
 
   const found = findTileInSeat(seatState, tileId);
@@ -241,22 +290,45 @@ function discard(state: HandState, seat: Seat, tileId: string): CommandResult {
     // Last normal draw was already taken; only win responses remain.
     state.phase = 'awaiting_win_response';
     state.responseWindow = {
+      mode: 'win_only',
       discarder: seat,
       tile: discarded,
       pending: otherSeats(seat),
+      locked: {},
       winners: [],
     };
     events.push({ type: 'WinResponseOpened', discarder: seat, tile: discarded });
   } else {
-    state.phase = 'awaiting_discard';
-    state.turn = nextSeat(seat);
+    const pending = pendingClaimSeats(state, seat, discarded.code, (s) =>
+      canWinOnDiscard(state, s, discarded.code),
+    );
+    if (pending.length === 0) {
+      state.phase = 'awaiting_discard';
+      state.turn = nextSeat(seat);
+    } else {
+      state.phase = 'awaiting_claim_response';
+      state.responseWindow = {
+        mode: 'claims',
+        discarder: seat,
+        tile: discarded,
+        pending: [...pending],
+        locked: {},
+        winners: [],
+      };
+      events.push({
+        type: 'ClaimResponseOpened',
+        discarder: seat,
+        tile: discarded,
+        pending: [...pending],
+      });
+    }
   }
 
   assertConservation(state);
   return { state, events };
 }
 
-function finishResponseWindow(state: HandState): DomainEvent[] {
+function finishWinOnlyWindow(state: HandState): DomainEvent[] {
   const window = state.responseWindow;
   if (!window) throw new Error('no response window');
   if (window.pending.length > 0) return [];
@@ -281,11 +353,109 @@ function finishResponseWindow(state: HandState): DomainEvent[] {
   return [{ type: 'ExhaustiveDraw', settlement }];
 }
 
+function applyMeld(
+  state: HandState,
+  seat: Seat,
+  kind: 'chow' | 'pung',
+  handTileIds: [string, string],
+): DomainEvent {
+  const window = state.responseWindow;
+  if (!window) throw new Error('no response window');
+  const claimed = takeDiscardFromRiver(state, window.discarder, window.tile.id);
+  const fromHand = removeHandTiles(state.seats[seat], handTileIds);
+  const tiles = sortHand([...fromHand, claimed]);
+  const meld: Meld = {
+    kind,
+    tiles,
+    fromSeat: window.discarder,
+    claimedTileId: claimed.id,
+  };
+  state.seats[seat].melds.push(meld);
+  state.turn = seat;
+  state.phase = 'awaiting_discard';
+  state.responseWindow = null;
+  return {
+    type: 'MeldFormed',
+    seat,
+    kind,
+    tiles: [...tiles],
+    fromSeat: window.discarder,
+    claimedTileId: claimed.id,
+  };
+}
+
+function resolveClaimsWindow(state: HandState): DomainEvent[] {
+  const window = state.responseWindow;
+  if (!window || window.mode !== 'claims') throw new Error('no claims window');
+  if (window.pending.length > 0) return [];
+
+  const winners = ([0, 1, 2, 3] as Seat[]).filter((s) => window.locked[s]?.kind === 'win');
+  if (winners.length > 0) {
+    state.phase = 'hand_won';
+    state.settlement = null;
+    state.responseWindow = null;
+    return [
+      {
+        type: 'HandWon',
+        winners,
+        discarder: window.discarder,
+        tile: window.tile,
+      },
+    ];
+  }
+
+  const pungSeats = ([0, 1, 2, 3] as Seat[]).filter((s) => window.locked[s]?.kind === 'pung');
+  const pungWinner = nearestAfter(window.discarder, pungSeats);
+  if (pungWinner !== null) {
+    const ids = pungTileIds(state.seats[pungWinner].hand, window.tile.code);
+    if (!ids) throw new Error(`seat ${pungWinner} locked pung but lacks tiles`);
+    return [applyMeld(state, pungWinner, 'pung', ids)];
+  }
+
+  const chowSeats = ([0, 1, 2, 3] as Seat[]).filter((s) => window.locked[s]?.kind === 'chow');
+  const chowWinner = nearestAfter(window.discarder, chowSeats);
+  if (chowWinner !== null) {
+    const locked = window.locked[chowWinner];
+    if (!locked || locked.kind !== 'chow') throw new Error('missing chow lock');
+    return [applyMeld(state, chowWinner, 'chow', locked.tileIds)];
+  }
+
+  // Everyone passed — resume with the discarder's next seat drawing.
+  state.phase = 'awaiting_discard';
+  state.turn = nextSeat(window.discarder);
+  state.responseWindow = null;
+  return [];
+}
+
+function lockResponse(state: HandState, seat: Seat, response: LockedResponse): DomainEvent[] {
+  const window = state.responseWindow;
+  if (!window) throw new Error('no response window');
+  if (!window.pending.includes(seat)) {
+    throw new Error(`seat ${seat} has no pending response`);
+  }
+  if (window.locked[seat]) {
+    throw new Error(`seat ${seat} already responded`);
+  }
+
+  window.locked[seat] = response;
+  window.pending = window.pending.filter((s) => s !== seat);
+
+  if (window.mode === 'win_only') {
+    if (response.kind === 'win') window.winners.push(seat);
+    return finishWinOnlyWindow(state);
+  }
+
+  return resolveClaimsWindow(state);
+}
+
 function claimWin(state: HandState, seat: Seat): CommandResult {
-  if (state.phase !== 'awaiting_win_response' || !state.responseWindow) {
+  const window = state.responseWindow;
+  if (
+    !window ||
+    (state.phase !== 'awaiting_win_response' && state.phase !== 'awaiting_claim_response')
+  ) {
     throw new Error('win claim is not allowed in the current phase');
   }
-  const window = state.responseWindow;
   if (!window.pending.includes(seat)) {
     throw new Error(`seat ${seat} has no pending win response`);
   }
@@ -293,24 +463,70 @@ function claimWin(state: HandState, seat: Seat): CommandResult {
     throw new Error(`seat ${seat} cannot win on ${window.tile.code}`);
   }
 
-  window.pending = window.pending.filter((s) => s !== seat);
-  window.winners.push(seat);
-  const events = finishResponseWindow(state);
+  const events = lockResponse(state, seat, { kind: 'win' });
+  assertConservation(state);
+  return { state, events };
+}
+
+function claimPung(state: HandState, seat: Seat): CommandResult {
+  if (state.phase !== 'awaiting_claim_response' || !state.responseWindow) {
+    throw new Error('pung claim is not allowed in the current phase');
+  }
+  const window = state.responseWindow;
+  if (window.mode !== 'claims') throw new Error('pung is not allowed in a win-only window');
+  if (!window.pending.includes(seat)) {
+    throw new Error(`seat ${seat} has no pending claim response`);
+  }
+  if (!pungTileIds(state.seats[seat].hand, window.tile.code)) {
+    throw new Error(`seat ${seat} cannot pung ${window.tile.code}`);
+  }
+
+  const events = lockResponse(state, seat, { kind: 'pung' });
+  assertConservation(state);
+  return { state, events };
+}
+
+function claimChow(state: HandState, seat: Seat, tileIds: [string, string]): CommandResult {
+  if (state.phase !== 'awaiting_claim_response' || !state.responseWindow) {
+    throw new Error('chow claim is not allowed in the current phase');
+  }
+  const window = state.responseWindow;
+  if (window.mode !== 'claims') throw new Error('chow is not allowed in a win-only window');
+  if (!window.pending.includes(seat)) {
+    throw new Error(`seat ${seat} has no pending claim response`);
+  }
+  if (seat !== nextSeat(window.discarder)) {
+    throw new Error(`seat ${seat} cannot chow from seat ${window.discarder}`);
+  }
+
+  const options = listChowOptions(state.seats[seat].hand, window.tile.code);
+  const sortedIds = [...tileIds].sort() as [string, string];
+  const match = options.find(
+    (opt) =>
+      [...opt.tileIds].sort().join(',') === sortedIds.join(','),
+  );
+  if (!match) {
+    throw new Error(`seat ${seat} cannot chow with ${tileIds.join(',')}`);
+  }
+
+  const events = lockResponse(state, seat, { kind: 'chow', tileIds: sortedIds });
   assertConservation(state);
   return { state, events };
 }
 
 function pass(state: HandState, seat: Seat): CommandResult {
-  if (state.phase !== 'awaiting_win_response' || !state.responseWindow) {
+  if (
+    (state.phase !== 'awaiting_win_response' && state.phase !== 'awaiting_claim_response') ||
+    !state.responseWindow
+  ) {
     throw new Error('pass is not allowed in the current phase');
   }
   const window = state.responseWindow;
   if (!window.pending.includes(seat)) {
-    throw new Error(`seat ${seat} has no pending win response`);
+    throw new Error(`seat ${seat} has no pending response`);
   }
 
-  window.pending = window.pending.filter((s) => s !== seat);
-  const events = finishResponseWindow(state);
+  const events = lockResponse(state, seat, { kind: 'pass' });
   assertConservation(state);
   return { state, events };
 }
@@ -332,6 +548,10 @@ export function applyCommand(prev: HandState | null, command: Command): CommandR
       return discard(state, command.seat, command.tileId);
     case 'ClaimWin':
       return claimWin(state, command.seat);
+    case 'ClaimPung':
+      return claimPung(state, command.seat);
+    case 'ClaimChow':
+      return claimChow(state, command.seat, command.tileIds);
     case 'Pass':
       return pass(state, command.seat);
     default: {
@@ -341,7 +561,7 @@ export function applyCommand(prev: HandState | null, command: Command): CommandR
   }
 }
 
-/** Draw for the current turn seat when they hold 13 tiles (no drawn yet). */
+/** Draw for the current turn seat when they hold the pre-draw concealed count. */
 export function ensureDrawn(prev: HandState): CommandResult {
   if (prev.phase !== 'awaiting_discard') {
     return { state: prev, events: [] };
@@ -349,7 +569,13 @@ export function ensureDrawn(prev: HandState): CommandResult {
   const seat = prev.turn;
   const seatState = prev.seats[seat];
   if (seatState.drawn) return { state: prev, events: [] };
-  if (seatState.hand.length !== 13) {
+
+  const expectedAfterMeldDiscard = 13 - seatState.melds.length * 3;
+  // After chow/pung the seat holds one extra tile and must discard without drawing.
+  if (seatState.hand.length === expectedAfterMeldDiscard + 1) {
+    return { state: prev, events: [] };
+  }
+  if (seatState.hand.length !== expectedAfterMeldDiscard) {
     throw new Error(`seat ${seat} unexpected hand size ${seatState.hand.length}`);
   }
   if (prev.wall.length === 0) {
@@ -370,4 +596,22 @@ export function legalDiscardTileIds(state: HandState, seat: Seat): string[] {
 
 export function displayHand(seat: SeatState): PhysicalTile[] {
   return seat.drawn ? [...seat.hand, seat.drawn] : [...seat.hand];
+}
+
+export function legalClaims(state: HandState, seat: Seat) {
+  const window = state.responseWindow;
+  if (!window || state.phase !== 'awaiting_claim_response') {
+    return { canWin: false, canPung: false, chowOptions: [] as ReturnType<typeof listChowOptions> };
+  }
+  return legalClaimsForSeat(
+    state.seats[seat],
+    window.discarder,
+    seat,
+    window.tile.code,
+    canWinOnDiscard(state, seat, window.tile.code),
+  );
+}
+
+export function seatHasClaimOptions(state: HandState, seat: Seat): boolean {
+  return hasAnyClaim(legalClaims(state, seat));
 }

@@ -113,33 +113,49 @@ function tryStandard(counts: Map<TileCode, number>, meldsLeft: number): boolean 
   return false;
 }
 
-function isStandardWin(codes: readonly TileCode[]): boolean {
-  if (codes.length !== 14) return false;
+function isStandardWin(codes: readonly TileCode[], exposedMeldCount = 0): boolean {
+  const meldsLeft = 4 - exposedMeldCount;
+  if (meldsLeft < 0) return false;
+  const expected = 2 + meldsLeft * 3;
+  if (codes.length !== expected) return false;
   const base = countsOf(codes);
   for (const code of FACE_CODES) {
     if ((base.get(code) ?? 0) < 2) continue;
     const next = cloneCounts(base);
     remove(next, code, 2);
-    if (tryStandard(next, 4)) return true;
+    if (tryStandard(next, meldsLeft)) return true;
   }
   return false;
 }
 
-/** True when 14 face codes form a recognized winning hand under 爽胡规则. */
+/** True when face codes form a recognized winning hand under 爽胡规则 (fully concealed). */
 export function isWinningCodes(codes: readonly TileCode[]): boolean {
   if (codes.length !== 14) return false;
-  return isSevenPairs(codes) || isThirteenOrphans(codes) || isStandardWin(codes);
+  return isSevenPairs(codes) || isThirteenOrphans(codes) || isStandardWin(codes, 0);
 }
 
 /**
- * Face codes that would complete a 13-tile concealed hand (听牌可胡牌).
+ * Win check for a seat that may already hold exposed melds.
+ * 七对 / 十三幺 require a fully concealed hand.
+ */
+export function isWinningHand(concealed: readonly TileCode[], exposedMeldCount: number): boolean {
+  if (exposedMeldCount === 0) return isWinningCodes(concealed);
+  return isStandardWin(concealed, exposedMeldCount);
+}
+
+/**
+ * Face codes that would complete a concealed hand given existing exposed melds (听牌可胡牌).
  * Order follows FACE_CODES.
  */
-export function waitingTileCodes(concealed13: readonly TileCode[]): TileCode[] {
-  if (concealed13.length !== 13) return [];
+export function waitingTileCodes(
+  concealed: readonly TileCode[],
+  exposedMeldCount = 0,
+): TileCode[] {
+  const expected = 13 - exposedMeldCount * 3;
+  if (concealed.length !== expected) return [];
   const waiting: TileCode[] = [];
   for (const code of FACE_CODES) {
-    if (isWinningCodes([...concealed13, code])) waiting.push(code);
+    if (isWinningHand([...concealed, code], exposedMeldCount)) waiting.push(code);
   }
   return waiting;
 }

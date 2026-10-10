@@ -22,9 +22,13 @@ test('play mode deals a seeded hand and continues after a player discard', async
   });
 
   expect(discarded.id).toBeTruthy();
-  expect(['awaiting_player_discard', 'awaiting_player_win_response', 'exhaustive_draw', 'hand_won']).toContain(
-    discarded.status,
-  );
+  expect([
+    'awaiting_player_discard',
+    'awaiting_player_claim_response',
+    'awaiting_player_win_response',
+    'exhaustive_draw',
+    'hand_won',
+  ]).toContain(discarded.status);
 
   const riverTail = await page.evaluate(() => {
     const river = window.__play!.snapshot().state!.seats[0].river;
@@ -55,13 +59,16 @@ test('auto-play reaches 流局 settlement with revealed hands', async ({ page })
       wall: snap.state!.wall.length,
       fan: snap.settlement!.fanBySeat,
       dealer: snap.state!.dealer,
-      hands: snap.settlement!.seats.map((s) => s.hand.length),
+      concealedPlusMelds: snap.settlement!.seats.map((s) => {
+        const melds = snap.state!.seats[s.seat].melds.length;
+        return s.hand.length + melds * 3;
+      }),
     };
   });
   expect(settlement.status).toBe('exhaustive_draw');
   expect(settlement.wall).toBe(0);
   expect(settlement.fan).toEqual({ 0: 0, 1: 0, 2: 0, 3: 0 });
-  expect(settlement.hands).toEqual([13, 13, 13, 13]);
+  expect(settlement.concealedPlusMelds).toEqual([13, 13, 13, 13]);
 
   const dealerBefore = settlement.dealer;
   await page.getByTestId('next-hand').click();

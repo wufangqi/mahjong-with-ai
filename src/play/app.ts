@@ -25,7 +25,9 @@ export function bootPlayApp(): void {
   const startBtn = mustEl<HTMLButtonElement>('start');
   const responseBar = mustEl<HTMLElement>('response-bar');
   const claimWinBtn = mustEl<HTMLButtonElement>('claim-win');
-  const passWinBtn = mustEl<HTMLButtonElement>('pass-win');
+  const claimPungBtn = mustEl<HTMLButtonElement>('claim-pung');
+  const chowOptionsEl = mustEl<HTMLElement>('chow-options');
+  const passBtn = mustEl<HTMLButtonElement>('pass-win');
   const drawPanel = mustEl<HTMLElement>('draw-panel');
   const drawSeats = mustEl<HTMLElement>('draw-seats');
   const nextHandBtn = mustEl<HTMLButtonElement>('next-hand');
@@ -75,6 +77,20 @@ export function bootPlayApp(): void {
     }
   };
 
+  const renderChowOptions = (): void => {
+    const snap = session.snapshot();
+    chowOptionsEl.replaceChildren();
+    if (snap.status !== 'awaiting_player_claim_response') return;
+    for (const option of snap.playerChowOptions) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.testid = 'claim-chow';
+      btn.textContent = `吃 ${formatTileCodes(option.codes)}`;
+      btn.addEventListener('click', () => session.claimChow(option.tileIds));
+      chowOptionsEl.append(btn);
+    }
+  };
+
   const refresh = (): void => {
     const snap = session.snapshot();
     table.sync(snap.state, snap.selectedTileId);
@@ -95,19 +111,26 @@ export function bootPlayApp(): void {
       `实体牌 ${totalTileCount(snap.state)}/${FULL_SET_SIZE}`,
     ].join(' · ');
 
-    responseBar.hidden = snap.status !== 'awaiting_player_win_response';
+    const responding =
+      snap.status === 'awaiting_player_win_response' ||
+      snap.status === 'awaiting_player_claim_response';
+    responseBar.hidden = !responding;
     claimWinBtn.hidden = !snap.playerCanWin;
+    claimPungBtn.hidden = snap.status !== 'awaiting_player_claim_response' || !snap.playerCanPung;
+    renderChowOptions();
 
     if (snap.status === 'awaiting_player_discard') {
       statusEl.textContent = snap.selectedTileId
         ? '再次点击同一张牌确认出牌，或拖入牌河'
         : '轮到你出牌：点击选牌';
+    } else if (snap.status === 'awaiting_player_claim_response') {
+      statusEl.textContent = '可响应：选择吃 / 碰 / 过（无倒计时）';
     } else if (snap.status === 'awaiting_player_win_response') {
       statusEl.textContent = snap.playerCanWin ? '最后一巡：可胡或过' : '最后一巡：请选择过';
     } else if (snap.status === 'exhaustive_draw') {
       statusEl.textContent = '流局 · 不计番 · 庄家不变';
     } else if (snap.status === 'hand_won') {
-      statusEl.textContent = '有人胡牌（本切片以流局演示为主）';
+      statusEl.textContent = '有人胡牌';
     } else {
       statusEl.textContent = '准备中…';
     }
@@ -127,7 +150,8 @@ export function bootPlayApp(): void {
   });
 
   claimWinBtn.addEventListener('click', () => session.claimWin());
-  passWinBtn.addEventListener('click', () => session.passWin());
+  claimPungBtn.addEventListener('click', () => session.claimPung());
+  passBtn.addEventListener('click', () => session.passResponse());
   nextHandBtn.addEventListener('click', () => {
     const nextSeed = (session.snapshot().seed ?? DEFAULT_SEED) + 1;
     seedInput.value = String(nextSeed);
@@ -191,7 +215,10 @@ export function bootPlayApp(): void {
     discardByDrag: (tileId: string) => session.discardByDrag(tileId),
     autoPlayToDraw: () => session.autoPlayPlayerFirstLegal(),
     claimWin: () => session.claimWin(),
-    passWin: () => session.passWin(),
+    claimPung: () => session.claimPung(),
+    claimChow: (tileIds: [string, string]) => session.claimChow(tileIds),
+    passWin: () => session.passResponse(),
+    passResponse: () => session.passResponse(),
     startNextHand: (seed: number) => session.startNextHand(seed),
   };
 

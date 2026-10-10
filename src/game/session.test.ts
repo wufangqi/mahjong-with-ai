@@ -15,7 +15,11 @@ describe('PlaySession', () => {
 
   it('requires a second click to confirm discard and then continues the round', () => {
     const session = new PlaySession();
-    session.start(7);
+    session.start(42);
+    for (let i = 0; i < 8 && session.snapshot().status === 'awaiting_player_claim_response'; i++) {
+      session.passResponse();
+    }
+    expect(session.snapshot().status).toBe('awaiting_player_discard');
     const drawnId = session.snapshot().state!.seats[PLAYER_SEAT].drawn!.id;
 
     session.clickTile(drawnId);
@@ -27,9 +31,13 @@ describe('PlaySession', () => {
     expect(after.state?.seats[PLAYER_SEAT].river.at(-1)?.id).toBe(drawnId);
     expect(totalTileCount(after.state!)).toBe(FULL_SET_SIZE);
     // Either back to player discard later in the loop, or a terminal/response status.
-    expect(['awaiting_player_discard', 'awaiting_player_win_response', 'exhaustive_draw', 'hand_won']).toContain(
-      after.status,
-    );
+    expect([
+      'awaiting_player_discard',
+      'awaiting_player_claim_response',
+      'awaiting_player_win_response',
+      'exhaustive_draw',
+      'hand_won',
+    ]).toContain(after.status);
   });
 
   it('accepts drag discard without a prior selection', () => {
@@ -55,7 +63,8 @@ describe('PlaySession', () => {
     expect(totalTileCount(snap.state!)).toBe(FULL_SET_SIZE);
 
     for (const info of snap.settlement!.seats) {
-      expect(info.hand).toHaveLength(13);
+      const melds = snap.state!.seats[info.seat].melds.length;
+      expect(info.hand.length + melds * 3).toBe(13);
     }
   });
 

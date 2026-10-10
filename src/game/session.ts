@@ -2,8 +2,10 @@ import {
   applyCommand,
   canWinOnDiscard,
   ensureDrawn,
+  legalClaims,
   legalDiscardTileIds,
   PLAYER_SEAT,
+  type ChowOption,
   type DomainEvent,
   type ExhaustiveDrawSettlement,
   type HandState,
@@ -14,6 +16,7 @@ export type SessionStatus =
   | 'idle'
   | 'awaiting_player_discard'
   | 'awaiting_player_win_response'
+  | 'awaiting_player_claim_response'
   | 'exhaustive_draw'
   | 'hand_won';
 
@@ -24,13 +27,15 @@ export interface PlaySessionSnapshot {
   events: DomainEvent[];
   seed: number | null;
   settlement: ExhaustiveDrawSettlement | null;
-  /** True when the player may claim 胡 on the final discard. */
+  /** True when the player may claim 胡 on the open discard. */
   playerCanWin: boolean;
+  playerCanPung: boolean;
+  playerChowOptions: ChowOption[];
 }
 
 /**
- * Coordinates a no-response full hand: seeded deal, first-legal opponent
- * discards, player discards, final win-only window, then 流局 / 胡 settlement.
+ * Coordinates a full hand: seeded deal, opponent discards, mid-hand claim
+ * windows (吃/碰/过), final win-only window, then 流局 / 胡 settlement.
  */
 export class PlaySession {
   private status: SessionStatus = 'idle';
@@ -39,6 +44,8 @@ export class PlaySession {
   private events: DomainEvent[] = [];
   private seed: number | null = null;
   private listeners = new Set<() => void>();
+  /** When true, AI always passes meld claims (used by autoplay 流局 demos). */
+  private passClaims = false;
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -50,8 +57,13 @@ export class PlaySession {
   }
 
   snapshot(): PlaySessionSnapshot {
+    const claims =
+      this.state?.phase === 'awaiting_claim_response'
+        ? legalClaims(this.state, PLAYER_SEAT)
+        : { canWin: false, canPung: false, chowOptions: [] as ChowOption[] };
+
     const playerCanWin =
-      this.state?.phase === 'awaiting_win_response' &&
+      (this.state?.phase === 'awaiting_win_response' || this.state?.phase === 'awaiting_claim_response') &&
       this.state.responseWindow !== null &&
       this.state.responseWindow.pending.includes(PLAYER_SEAT) &&
       canWinOnDiscard(this.state, PLAYER_SEAT, this.state.responseWindow.tile.code);
@@ -63,7 +75,9 @@ export class PlaySession {
       events: [...this.events],
       seed: this.seed,
       settlement: this.state?.settlement ?? null,
-      playerCanWin,
+      playerCanWin: Boolean(playerCanWin),
+      playerCanPung: claims.canPung,
+      playerChowOptions: claims.chowOptions,
     };
   }
 
@@ -77,6 +91,7 @@ export class PlaySession {
     this.state = started.state;
     this.events = [...started.events];
     this.selectedTileId = null;
+    this.passClaims = false;
     this.advance();
     this.emit();
   }
@@ -90,8 +105,9 @@ export class PlaySession {
   }
 
   /**
-   * Auto-advance non-player seats (and resolve AI win responses) until the
-   * player must act or the hand ends.
+   * Auto-advance non-player seats (and lock AI claim/win responses) until the
+   * player must act or the hand ends. AI choices are locked without applying
+   * melds until every pending seat has answered.
    */
   private advance(): void {
     if (!this.state) return;
@@ -128,6 +144,19 @@ export class PlaySession {
           continue;
         }
         this.status = 'awaiting_player_win_response';
+        return;
+      }
+
+      if (this.state.phase === 'awaiting_claim_response') {
+        this.lockOpponentClaimResponses();
+        if (!this.state) return;
+        if (this.state.phase !== 'awaiting_claim_response' || !this.state.responseWindow) {
+          continue;
+        }
+        if (!this.state.responseWindow.pending.includes(PLAYER_SEAT)) {
+          continue;
+        }
+        this.status = 'awaiting_player_claim_response';
         return;
       }
 
@@ -178,6 +207,44 @@ export class PlaySession {
     }
   }
 
+  /** Lock AI claim choices without revealing them in the UI. */
+  private lockOpponentClaimResponses(): void {
+    if (!this.state || this.state.phase !== 'awaiting_claim_response' || !this.state.responseWindow) {
+      return;
+    }
+
+    const pending = [...this.state.responseWindow.pending];
+    for (const seat of pending) {
+      if (seat === PLAYER_SEAT) continue;
+      const window = this.state.responseWindow;
+      if (!window || !window.pending.includes(seat)) continue;
+
+      const claims = legalClaims(this.state, seat);
+      let command:
+        | { type: 'Pass'; seat: Seat }
+        | { type: 'ClaimWin'; seat: Seat }
+        | { type: 'ClaimPung'; seat: Seat }
+        | { type: 'ClaimChow'; seat: Seat; tileIds: [string, string] };
+
+      if (this.passClaims) {
+        command = { type: 'Pass', seat };
+      } else if (claims.canWin) {
+        command = { type: 'ClaimWin', seat };
+      } else if (claims.canPung) {
+        command = { type: 'ClaimPung', seat };
+      } else if (claims.chowOptions[0]) {
+        command = { type: 'ClaimChow', seat, tileIds: claims.chowOptions[0].tileIds };
+      } else {
+        command = { type: 'Pass', seat };
+      }
+
+      const result = applyCommand(this.state, command);
+      this.state = result.state;
+      this.events.push(...result.events);
+      if (!this.state || this.state.phase !== 'awaiting_claim_response') return;
+    }
+  }
+
   selectTile(tileId: string): void {
     if (this.status !== 'awaiting_player_discard' || !this.state) return;
     const legal = legalDiscardTileIds(this.state, PLAYER_SEAT);
@@ -223,7 +290,13 @@ export class PlaySession {
   }
 
   claimWin(): void {
-    if (this.status !== 'awaiting_player_win_response' || !this.state) return;
+    if (
+      (this.status !== 'awaiting_player_win_response' &&
+        this.status !== 'awaiting_player_claim_response') ||
+      !this.state
+    ) {
+      return;
+    }
     const result = applyCommand(this.state, { type: 'ClaimWin', seat: PLAYER_SEAT });
     this.state = result.state;
     this.events.push(...result.events);
@@ -231,8 +304,36 @@ export class PlaySession {
     this.emit();
   }
 
-  passWin(): void {
-    if (this.status !== 'awaiting_player_win_response' || !this.state) return;
+  claimPung(): void {
+    if (this.status !== 'awaiting_player_claim_response' || !this.state) return;
+    const result = applyCommand(this.state, { type: 'ClaimPung', seat: PLAYER_SEAT });
+    this.state = result.state;
+    this.events.push(...result.events);
+    this.advance();
+    this.emit();
+  }
+
+  claimChow(tileIds: [string, string]): void {
+    if (this.status !== 'awaiting_player_claim_response' || !this.state) return;
+    const result = applyCommand(this.state, {
+      type: 'ClaimChow',
+      seat: PLAYER_SEAT,
+      tileIds,
+    });
+    this.state = result.state;
+    this.events.push(...result.events);
+    this.advance();
+    this.emit();
+  }
+
+  passResponse(): void {
+    if (
+      (this.status !== 'awaiting_player_win_response' &&
+        this.status !== 'awaiting_player_claim_response') ||
+      !this.state
+    ) {
+      return;
+    }
     const result = applyCommand(this.state, { type: 'Pass', seat: PLAYER_SEAT });
     this.state = result.state;
     this.events.push(...result.events);
@@ -240,21 +341,29 @@ export class PlaySession {
     this.emit();
   }
 
+  /** @deprecated use passResponse */
+  passWin(): void {
+    this.passResponse();
+  }
+
   /**
-   * Test / e2e helper: discard the player's first legal tile repeatedly until
-   * the hand reaches settlement (or a win-response the player must answer).
+   * Test / e2e helper: discard the player's first legal tile and pass all claim
+   * windows until the hand reaches settlement (or a win the player must answer).
    */
-  autoPlayPlayerFirstLegal(maxSteps = 200): void {
+  autoPlayPlayerFirstLegal(maxSteps = 400): void {
+    this.passClaims = true;
     for (let i = 0; i < maxSteps; i++) {
       if (this.status === 'awaiting_player_discard' && this.state) {
         const tileId = pickAutoDiscard(this.state, PLAYER_SEAT);
         this.confirmDiscard(tileId);
         continue;
       }
+      if (this.status === 'awaiting_player_claim_response') {
+        this.passResponse();
+        continue;
+      }
       if (this.status === 'awaiting_player_win_response') {
-        // Prefer 流局 path for automated demos unless the player can win and we claim.
-        if (this.snapshot().playerCanWin) this.passWin();
-        else this.passWin();
+        this.passResponse();
         continue;
       }
       return;

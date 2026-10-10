@@ -39,6 +39,7 @@ export class TableView {
   private playerTiles: PreviewTile[] = [];
   private opponentGroups: THREE.Group[] = [];
   private riverGroups: THREE.Group[] = [];
+  private meldGroups: THREE.Group[] = [];
   private dealerMarker: THREE.Mesh;
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
@@ -91,8 +92,10 @@ export class TableView {
     for (let seat = 0; seat < 4; seat++) {
       this.opponentGroups.push(new THREE.Group());
       this.riverGroups.push(new THREE.Group());
+      this.meldGroups.push(new THREE.Group());
       this.root.add(this.opponentGroups[seat]!);
       this.root.add(this.riverGroups[seat]!);
+      this.root.add(this.meldGroups[seat]!);
     }
 
     window.addEventListener('resize', () => this.onResize());
@@ -129,6 +132,7 @@ export class TableView {
 
     for (const seat of [0, 1, 2, 3] as Seat[]) {
       this.layoutRiver(seat, state.seats[seat].river);
+      this.layoutMelds(seat, state.seats[seat].melds);
       if (seat === PLAYER_SEAT) {
         this.layoutPlayerHand(displayHand(state.seats[seat]), selectedTileId);
       } else {
@@ -146,6 +150,9 @@ export class TableView {
       while (g.children.length) g.remove(g.children[0]!);
     }
     for (const g of this.riverGroups) {
+      while (g.children.length) g.remove(g.children[0]!);
+    }
+    for (const g of this.meldGroups) {
       while (g.children.length) g.remove(g.children[0]!);
     }
   }
@@ -203,6 +210,31 @@ export class TableView {
         1.35 + row * (TILE_H * 0.55),
       );
       group.add(preview.group);
+    });
+    group.rotation.y = yaw;
+  }
+
+  private layoutMelds(seat: Seat, melds: HandState['seats'][Seat]['melds']): void {
+    const group = this.meldGroups[seat]!;
+    const yaw = SEAT_YAW[seat];
+    let xCursor = -3.2;
+    melds.forEach((meld) => {
+      meld.tiles.forEach((tile, i) => {
+        const preview = createTile(tile.code);
+        preview.group.rotation.x = -Math.PI / 2;
+        const claimed = tile.id === meld.claimedTileId;
+        preview.group.position.set(
+          xCursor + i * (TILE_W * 0.92),
+          TILE_D / 2 + 0.01,
+          3.35,
+        );
+        if (claimed) {
+          preview.outline.material.opacity = 0.55;
+          preview.outline.material.color.setHex(0xf5c46a);
+        }
+        group.add(preview.group);
+      });
+      xCursor += meld.tiles.length * (TILE_W * 0.92) + 0.18;
     });
     group.rotation.y = yaw;
   }

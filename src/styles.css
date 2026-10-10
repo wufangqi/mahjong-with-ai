@@ -60,6 +60,14 @@ header p { margin: 6px 0 0; font-size: 13px; opacity: .65; letter-spacing: 1px; 
   background: linear-gradient(180deg, rgba(60,30,12,.9), rgba(20,10,6,.95));
 }
 #claim-win { background: linear-gradient(180deg, rgba(120,40,30,.95), rgba(50,10,8,.95)); border-color: #f0a060; }
+#claim-pung { background: linear-gradient(180deg, rgba(40,70,90,.95), rgba(12,24,36,.95)); }
+.chow-options { display: flex; gap: 8px; flex-wrap: wrap; }
+.chow-options:empty { display: none; }
+.chow-options button {
+  cursor: pointer; border: 1px solid rgba(120,200,160,.55); color: #e8fff2; font: inherit;
+  letter-spacing: 1px; padding: 12px 16px; border-radius: 12px;
+  background: linear-gradient(180deg, rgba(20,70,50,.95), rgba(8,28,20,.95));
+}
 
 #draw-panel {
   position: fixed; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center;

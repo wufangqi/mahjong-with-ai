@@ -10,7 +10,10 @@ declare global {
       discardByDrag: (tileId: string) => void;
       autoPlayToDraw: () => void;
       claimWin: () => void;
+      claimPung: () => void;
+      claimChow: (tileIds: [string, string]) => void;
       passWin: () => void;
+      passResponse: () => void;
       startNextHand: (seed: number) => void;
     };
   }
