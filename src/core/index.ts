@@ -42,5 +42,14 @@ export type {
   Seat,
   SeatDrawInfo,
   SeatState,
+  WinnerResult,
+  WinSettlement,
 } from './types';
-export { isWinningCodes, isWinningHand, waitingTileCodes } from './winning';
+export {
+  evaluateWin,
+  isWinningCodes,
+  isWinningHand,
+  waitingTileCodes,
+  type FanPatternId,
+  type WinEvaluation,
+} from './winning';

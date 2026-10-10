@@ -3,14 +3,18 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>AI 爽胡麻将 · 吃碰响应</title>
+<title>AI 爽胡麻将 · 吃碰与平胡</title>
 </head>
 <body class="play">
   <canvas id="c" data-testid="table-canvas"></canvas>
+  <div id="banner" data-testid="win-banner" aria-hidden="true">
+    <div id="banner-main" class="main">胡</div>
+    <div id="banner-sub">平胡 · 1 番</div>
+  </div>
 
   <header>
     <h1>AI 爽胡麻将</h1>
-    <p>吃 · 碰 · 过 · 行牌（WUF-54）</p>
+    <p>吃碰 · 平胡 basic · 结算</p>
   </header>
 
   <div id="hud">
@@ -43,7 +47,19 @@
     </div>
   </div>
 
-  <div id="hint">单击选牌 · 再点确认出牌 · 或拖入前方牌河</div>
+  <div id="win-panel" data-testid="win-panel" hidden>
+    <div class="win-panel-inner">
+      <h2>胡牌结算</h2>
+      <p class="win-intro">赢家 · 番型 · 番数</p>
+      <div id="win-summary" data-testid="win-summary" class="win-summary"></div>
+      <div class="win-actions">
+        <button id="replay-scene" data-testid="replay-scene" type="button">重播场面</button>
+        <button id="win-next-hand" data-testid="win-next-hand" type="button">下一局</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="hint">单击选牌 · 再点确认出牌 · 可响应时选胡 / 吃 / 碰 / 过</div>
 
   <div id="error"><div>
     <h2>WebGL 不可用或加载失败</h2>

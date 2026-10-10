@@ -2,6 +2,7 @@ import { FULL_SET_SIZE, PLAYER_SEAT, totalTileCount, type Seat } from '../core';
 import { PlaySession } from '../game/session';
 import { TableView } from './tableView';
 import { formatTileCodes } from './tileLabels';
+import { patternLabels, WinSceneScheduler, type WinScenePlan } from './winPresentation';
 
 function mustEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -31,11 +32,34 @@ export function bootPlayApp(): void {
   const drawPanel = mustEl<HTMLElement>('draw-panel');
   const drawSeats = mustEl<HTMLElement>('draw-seats');
   const nextHandBtn = mustEl<HTMLButtonElement>('next-hand');
+  const winPanel = mustEl<HTMLElement>('win-panel');
+  const winSummary = mustEl<HTMLElement>('win-summary');
+  const winNextHandBtn = mustEl<HTMLButtonElement>('win-next-hand');
+  const replaySceneBtn = mustEl<HTMLButtonElement>('replay-scene');
+  const banner = mustEl<HTMLElement>('banner');
+  const bannerMain = mustEl<HTMLElement>('banner-main');
+  const bannerSub = mustEl<HTMLElement>('banner-sub');
 
   seedInput.value = String(DEFAULT_SEED);
 
   const session = new PlaySession();
   const table = new TableView(canvas);
+  const scenes = new WinSceneScheduler();
+  let lastHandWonEventCount = 0;
+
+  const showScene = (plans: WinScenePlan[]): void => {
+    const plan = plans[0];
+    if (!plan) return;
+    bannerMain.textContent = plan.bannerMain;
+    bannerSub.textContent = plan.bannerSub;
+    banner.className = `show ${plan.tier}`;
+    banner.style.setProperty('--delay', '0s');
+    window.setTimeout(() => {
+      if (banner.classList.contains('show')) banner.className = '';
+    }, 2400);
+  };
+
+  scenes.onPlay(showScene);
 
   const renderDrawPanel = (): void => {
     const snap = session.snapshot();
@@ -91,15 +115,51 @@ export function bootPlayApp(): void {
     }
   };
 
+  const renderWinPanel = (): void => {
+    const snap = session.snapshot();
+    if (snap.status !== 'hand_won' || !snap.winSettlement) {
+      winPanel.hidden = true;
+      winSummary.replaceChildren();
+      return;
+    }
+
+    winPanel.hidden = false;
+    winSummary.replaceChildren();
+    for (const winner of snap.winSettlement.winners) {
+      const row = document.createElement('div');
+      row.className = 'win-seat';
+      row.dataset.seat = String(winner.seat);
+      const labels = patternLabels(winner.patterns).join('、');
+      row.innerHTML = [
+        `<div class="win-seat-head"><span>${SEAT_NAMES[winner.seat]}</span><span class="win-fan">${winner.fan} 番</span></div>`,
+        `<div class="win-patterns">${labels}</div>`,
+        `<div class="win-hand">手牌 ${formatTileCodes(winner.hand.map((t) => t.code))}</div>`,
+      ].join('');
+      winSummary.append(row);
+    }
+  };
+
+  const maybeScheduleWinScene = (): void => {
+    const snap = session.snapshot();
+    const handWonEvents = snap.events.filter((e) => e.type === 'HandWon');
+    if (handWonEvents.length <= lastHandWonEventCount) return;
+    lastHandWonEventCount = handWonEvents.length;
+    const latest = handWonEvents[handWonEvents.length - 1]!;
+    if (latest.type !== 'HandWon') return;
+    scenes.scheduleWinners(latest.winners);
+  };
+
   const refresh = (): void => {
     const snap = session.snapshot();
     table.sync(snap.state, snap.selectedTileId);
+    maybeScheduleWinScene();
 
     if (!snap.state) {
       statusEl.textContent = '输入种子并开始一局';
       metaEl.textContent = '';
       responseBar.hidden = true;
       drawPanel.hidden = true;
+      winPanel.hidden = true;
       return;
     }
 
@@ -126,16 +186,19 @@ export function bootPlayApp(): void {
     } else if (snap.status === 'awaiting_player_claim_response') {
       statusEl.textContent = '可响应：选择吃 / 碰 / 过（无倒计时）';
     } else if (snap.status === 'awaiting_player_win_response') {
-      statusEl.textContent = snap.playerCanWin ? '最后一巡：可胡或过' : '最后一巡：请选择过';
+      statusEl.textContent = snap.playerCanWin ? '可胡或过' : '请选择过';
     } else if (snap.status === 'exhaustive_draw') {
       statusEl.textContent = '流局 · 不计番 · 庄家不变';
     } else if (snap.status === 'hand_won') {
-      statusEl.textContent = '有人胡牌';
+      const first = snap.winSettlement?.winners[0];
+      const label = first ? patternLabels(first.patterns).join('、') : '胡';
+      statusEl.textContent = `胡牌 · ${label} · ${first?.fan ?? 0} 番`;
     } else {
       statusEl.textContent = '准备中…';
     }
 
     renderDrawPanel();
+    renderWinPanel();
   };
 
   session.subscribe(refresh);
@@ -146,6 +209,7 @@ export function bootPlayApp(): void {
       statusEl.textContent = '请输入有效数字种子';
       return;
     }
+    lastHandWonEventCount = 0;
     session.start(seed);
   });
 
@@ -155,8 +219,16 @@ export function bootPlayApp(): void {
   nextHandBtn.addEventListener('click', () => {
     const nextSeed = (session.snapshot().seed ?? DEFAULT_SEED) + 1;
     seedInput.value = String(nextSeed);
+    lastHandWonEventCount = 0;
     session.startNextHand(nextSeed);
   });
+  winNextHandBtn.addEventListener('click', () => {
+    const nextSeed = (session.snapshot().seed ?? DEFAULT_SEED) + 1;
+    seedInput.value = String(nextSeed);
+    lastHandWonEventCount = 0;
+    session.startNextHand(nextSeed);
+  });
+  replaySceneBtn.addEventListener('click', () => scenes.replay());
 
   let pointerDownAt: { x: number; y: number; tileId: string } | null = null;
   let dragging = false;
@@ -209,7 +281,10 @@ export function bootPlayApp(): void {
 
   window.__play = {
     ready: true,
-    start: (seed: number) => session.start(seed),
+    start: (seed: number) => {
+      lastHandWonEventCount = 0;
+      session.start(seed);
+    },
     snapshot: () => session.snapshot(),
     clickTile: (tileId: string) => session.clickTile(tileId),
     discardByDrag: (tileId: string) => session.discardByDrag(tileId),
@@ -219,7 +294,16 @@ export function bootPlayApp(): void {
     claimChow: (tileIds: [string, string]) => session.claimChow(tileIds),
     passWin: () => session.passResponse(),
     passResponse: () => session.passResponse(),
-    startNextHand: (seed: number) => session.startNextHand(seed),
+    startNextHand: (seed: number) => {
+      lastHandWonEventCount = 0;
+      session.startNextHand(seed);
+    },
+    loadPinghuWinDemo: () => {
+      lastHandWonEventCount = 0;
+      session.loadPinghuWinDemo();
+    },
+    replayScene: () => scenes.replay(),
+    lastScenePlans: () => scenes.getLastPlans(),
   };
 
   document.body.classList.add('ready');

@@ -1,6 +1,7 @@
 import {
   applyCommand,
   canWinOnDiscard,
+  createFullSet,
   ensureDrawn,
   legalClaims,
   legalDiscardTileIds,
@@ -9,7 +10,10 @@ import {
   type DomainEvent,
   type ExhaustiveDrawSettlement,
   type HandState,
+  type PhysicalTile,
   type Seat,
+  type TileCode,
+  type WinSettlement,
 } from '../core';
 
 export type SessionStatus =
@@ -27,6 +31,7 @@ export interface PlaySessionSnapshot {
   events: DomainEvent[];
   seed: number | null;
   settlement: ExhaustiveDrawSettlement | null;
+  winSettlement: WinSettlement | null;
   /** True when the player may claim 胡 on the open discard. */
   playerCanWin: boolean;
   playerCanPung: boolean;
@@ -35,7 +40,7 @@ export interface PlaySessionSnapshot {
 
 /**
  * Coordinates a full hand: seeded deal, opponent discards, mid-hand claim
- * windows (吃/碰/过), final win-only window, then 流局 / 胡 settlement.
+ * windows (吃/碰/过/胡), final win-only window, then 流局 / 平胡 settlement.
  */
 export class PlaySession {
   private status: SessionStatus = 'idle';
@@ -46,6 +51,8 @@ export class PlaySession {
   private listeners = new Set<() => void>();
   /** When true, AI always passes meld claims (used by autoplay 流局 demos). */
   private passClaims = false;
+  /** When true, every seat passes win responses (流局 auto-play helper). */
+  private forcePassWins = false;
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -75,6 +82,7 @@ export class PlaySession {
       events: [...this.events],
       seed: this.seed,
       settlement: this.state?.settlement ?? null,
+      winSettlement: this.state?.winSettlement ?? null,
       playerCanWin: Boolean(playerCanWin),
       playerCanPung: claims.canPung,
       playerChowOptions: claims.chowOptions,
@@ -92,16 +100,27 @@ export class PlaySession {
     this.events = [...started.events];
     this.selectedTileId = null;
     this.passClaims = false;
+    this.forcePassWins = false;
     this.advance();
     this.emit();
   }
 
   /** After 流局, start the next hand with the same dealer. */
   startNextHand(seed: number): void {
-    if (!this.state || this.state.phase !== 'exhaustive_draw') {
-      throw new Error('next hand is only available after exhaustive draw');
+    if (!this.state) throw new Error('no hand in progress');
+
+    if (this.state.phase === 'exhaustive_draw') {
+      this.start(seed, this.state.dealer);
+      return;
     }
-    this.start(seed, this.state.dealer);
+
+    if (this.state.phase === 'hand_won' && this.state.winSettlement) {
+      const nextDealer = nextDealerAfterWin(this.state.winSettlement);
+      this.start(seed, nextDealer);
+      return;
+    }
+
+    throw new Error('next hand is only available after settlement');
   }
 
   /**
@@ -137,7 +156,7 @@ export class PlaySession {
           continue;
         }
         const tileCode = this.state.responseWindow.tile.code;
-        if (!canWinOnDiscard(this.state, PLAYER_SEAT, tileCode)) {
+        if (this.forcePassWins || !canWinOnDiscard(this.state, PLAYER_SEAT, tileCode)) {
           const result = applyCommand(this.state, { type: 'Pass', seat: PLAYER_SEAT });
           this.state = result.state;
           this.events.push(...result.events);
@@ -197,9 +216,10 @@ export class PlaySession {
       const window = this.state.responseWindow;
       if (!window || !window.pending.includes(seat)) continue;
       const tileCode = window.tile.code;
-      const command = canWinOnDiscard(this.state, seat, tileCode)
-        ? ({ type: 'ClaimWin' as const, seat })
-        : ({ type: 'Pass' as const, seat });
+      const command =
+        !this.forcePassWins && canWinOnDiscard(this.state, seat, tileCode)
+          ? ({ type: 'ClaimWin' as const, seat })
+          : ({ type: 'Pass' as const, seat });
       const result = applyCommand(this.state, command);
       this.state = result.state;
       this.events.push(...result.events);
@@ -348,28 +368,104 @@ export class PlaySession {
 
   /**
    * Test / e2e helper: discard the player's first legal tile and pass all claim
-   * windows until the hand reaches settlement (or a win the player must answer).
+   * / win windows until 流局 (mid-hand 胡 must not end the demo).
    */
   autoPlayPlayerFirstLegal(maxSteps = 400): void {
     this.passClaims = true;
-    for (let i = 0; i < maxSteps; i++) {
-      if (this.status === 'awaiting_player_discard' && this.state) {
-        const tileId = pickAutoDiscard(this.state, PLAYER_SEAT);
-        this.confirmDiscard(tileId);
-        continue;
+    this.forcePassWins = true;
+    try {
+      for (let i = 0; i < maxSteps; i++) {
+        if (this.status === 'awaiting_player_discard' && this.state) {
+          const tileId = pickAutoDiscard(this.state, PLAYER_SEAT);
+          this.confirmDiscard(tileId);
+          continue;
+        }
+        if (this.status === 'awaiting_player_claim_response') {
+          this.passResponse();
+          continue;
+        }
+        if (this.status === 'awaiting_player_win_response') {
+          this.passResponse();
+          continue;
+        }
+        return;
       }
-      if (this.status === 'awaiting_player_claim_response') {
-        this.passResponse();
-        continue;
-      }
-      if (this.status === 'awaiting_player_win_response') {
-        this.passResponse();
-        continue;
-      }
-      return;
+      throw new Error('autoPlayPlayerFirstLegal exceeded max steps');
+    } finally {
+      this.passClaims = false;
+      this.forcePassWins = false;
     }
-    throw new Error('autoPlayPlayerFirstLegal exceeded max steps');
   }
+
+  /**
+   * Demo / e2e: load a mid-hand position where the player can 平胡 on the open
+   * discard (seat 1 just discarded m1).
+   */
+  loadPinghuWinDemo(): void {
+    const state = buildPlayerPinghuResponseState();
+    this.seed = state.seed;
+    this.state = state;
+    this.events = [{ type: 'WinResponseOpened', discarder: state.responseWindow!.discarder, tile: state.responseWindow!.tile }];
+    this.selectedTileId = null;
+    this.status = 'awaiting_player_win_response';
+    this.emit();
+  }
+}
+
+function nextDealerAfterWin(settlement: WinSettlement): Seat {
+  if (settlement.winners.length === 1) return settlement.winners[0]!.seat;
+  // Nearest winner after the discarder (一炮多响); kept deterministic for later tickets.
+  const discarder = settlement.discarder;
+  for (let i = 1; i <= 4; i++) {
+    const seat = ((discarder + i) % 4) as Seat;
+    if (settlement.winners.some((w) => w.seat === seat)) return seat;
+  }
+  return settlement.winners[0]!.seat;
+}
+
+function takeFromPool(pool: PhysicalTile[], code: TileCode): PhysicalTile {
+  const index = pool.findIndex((t) => t.code === code);
+  if (index < 0) throw new Error(`missing ${code} in pool`);
+  return pool.splice(index, 1)[0]!;
+}
+
+/** Player (seat 0) is ready on m1; seat 1 has just discarded it. */
+function buildPlayerPinghuResponseState(): HandState {
+  const pool = createFullSet();
+  const winning = takeFromPool(pool, 'm1');
+  const seat0Hand = (
+    ['m2', 'm3', 'm4', 'm5', 'm6', 'p2', 'p2', 'p2', 's7', 's8', 's9', 'E', 'E'] as TileCode[]
+  ).map((code) => takeFromPool(pool, code));
+
+  const seats: HandState['seats'] = [
+    { hand: seat0Hand, drawn: null, river: [], melds: [] },
+    { hand: pool.splice(0, 13), drawn: null, river: [winning], melds: [] },
+    { hand: pool.splice(0, 13), drawn: null, river: [], melds: [] },
+    { hand: pool.splice(0, 13), drawn: null, river: [], melds: [] },
+  ];
+
+  return {
+    schemaVersion: 1,
+    ruleSetId: 'shuanghu-v1',
+    seed: 5301,
+    rngState: 1,
+    dealer: 1,
+    turn: 1,
+    phase: 'awaiting_win_response',
+    wall: pool,
+    seats,
+    responseWindow: {
+      mode: 'win_only',
+      discarder: 1,
+      tile: winning,
+      // Demo only needs the player seat; other seats are not pending responders.
+      pending: [0],
+      locked: {},
+      winners: [],
+    },
+    settlement: null,
+    winSettlement: null,
+  };
 }
 
 function pickAutoDiscard(state: HandState, seat: Seat): string {

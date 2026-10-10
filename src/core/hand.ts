@@ -27,8 +27,10 @@ import type {
   Meld,
   Seat,
   SeatState,
+  WinnerResult,
+  WinSettlement,
 } from './types';
-import { isWinningHand, waitingTileCodes } from './winning';
+import { evaluateWin, isWinningHand, waitingTileCodes } from './winning';
 
 export const PLAYER_SEAT: Seat = 0;
 
@@ -49,6 +51,17 @@ function cloneSeat(seat: SeatState): SeatState {
     drawn: seat.drawn,
     river: [...seat.river],
     melds: seat.melds.map(cloneMeld),
+  };
+}
+
+function cloneWinner(w: WinnerResult): WinnerResult {
+  return { ...w, patterns: [...w.patterns], hand: [...w.hand] };
+}
+
+function cloneWinSettlement(s: WinSettlement): WinSettlement {
+  return {
+    ...s,
+    winners: s.winners.map(cloneWinner),
   };
 }
 
@@ -81,6 +94,7 @@ function cloneState(state: HandState): HandState {
           fanBySeat: { ...state.settlement.fanBySeat },
         }
       : null,
+    winSettlement: state.winSettlement ? cloneWinSettlement(state.winSettlement) : null,
   };
 }
 
@@ -145,6 +159,50 @@ export function canWinOnDiscard(state: HandState, seat: Seat, tileCode: TileCode
   return isWinningHand([...handCodes(seatState), tileCode], exposed);
 }
 
+function buildWinnerResult(state: HandState, seat: Seat, winningTile: PhysicalTile): WinnerResult {
+  const seatState = state.seats[seat];
+  const hand = sortHand([...seatState.hand, winningTile]);
+  const evaluation = evaluateWin(
+    hand.map((t) => t.code),
+    seatState.melds.length,
+  );
+  if (evaluation.patterns.length === 0) {
+    throw new Error(`seat ${seat} claimed win without a matching pattern`);
+  }
+  return {
+    seat,
+    patterns: evaluation.patterns,
+    fan: evaluation.fan,
+    hand,
+  };
+}
+
+function emitHandWon(
+  state: HandState,
+  winnerSeats: readonly Seat[],
+  discarder: Seat,
+  tile: PhysicalTile,
+): DomainEvent {
+  const winners = winnerSeats.map((seat) => buildWinnerResult(state, seat, tile));
+  const winSettlement: WinSettlement = {
+    winners,
+    discarder,
+    tile,
+    winKind: 'discard',
+  };
+  state.phase = 'hand_won';
+  state.settlement = null;
+  state.winSettlement = winSettlement;
+  state.responseWindow = null;
+  return {
+    type: 'HandWon',
+    winners,
+    discarder,
+    tile,
+    winKind: 'discard',
+  };
+}
+
 export function buildExhaustiveDrawSettlement(state: HandState): ExhaustiveDrawSettlement {
   const seats = ([0, 1, 2, 3] as Seat[]).map((seat) => {
     const seatState = state.seats[seat];
@@ -202,6 +260,7 @@ function startHand(seed: number, forcedDealer?: Seat): CommandResult {
     seats,
     responseWindow: null,
     settlement: null,
+    winSettlement: null,
   };
 
   drawFromWall(state, dealer);
@@ -334,23 +393,24 @@ function finishWinOnlyWindow(state: HandState): DomainEvent[] {
   if (window.pending.length > 0) return [];
 
   if (window.winners.length > 0) {
-    state.phase = 'hand_won';
-    state.settlement = null;
-    const event: DomainEvent = {
-      type: 'HandWon',
-      winners: [...window.winners],
-      discarder: window.discarder,
-      tile: window.tile,
-    };
-    state.responseWindow = null;
-    return [event];
+    return [emitHandWon(state, window.winners, window.discarder, window.tile)];
   }
 
-  const settlement = buildExhaustiveDrawSettlement(state);
-  state.phase = 'exhaustive_draw';
-  state.settlement = settlement;
+  // All passed: final discard → 流局; otherwise only this opportunity is spent.
+  if (state.wall.length === 0) {
+    const settlement = buildExhaustiveDrawSettlement(state);
+    state.phase = 'exhaustive_draw';
+    state.settlement = settlement;
+    state.winSettlement = null;
+    state.responseWindow = null;
+    return [{ type: 'ExhaustiveDraw', settlement }];
+  }
+
+  state.phase = 'awaiting_discard';
+  state.turn = nextSeat(window.discarder);
   state.responseWindow = null;
-  return [{ type: 'ExhaustiveDraw', settlement }];
+  state.winSettlement = null;
+  return [];
 }
 
 function applyMeld(
@@ -391,17 +451,7 @@ function resolveClaimsWindow(state: HandState): DomainEvent[] {
 
   const winners = ([0, 1, 2, 3] as Seat[]).filter((s) => window.locked[s]?.kind === 'win');
   if (winners.length > 0) {
-    state.phase = 'hand_won';
-    state.settlement = null;
-    state.responseWindow = null;
-    return [
-      {
-        type: 'HandWon',
-        winners,
-        discarder: window.discarder,
-        tile: window.tile,
-      },
-    ];
+    return [emitHandWon(state, winners, window.discarder, window.tile)];
   }
 
   const pungSeats = ([0, 1, 2, 3] as Seat[]).filter((s) => window.locked[s]?.kind === 'pung');

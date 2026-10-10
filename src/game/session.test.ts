@@ -90,4 +90,40 @@ describe('PlaySession', () => {
       b.snapshot().state!.seats.map((s) => s.river.map((t) => t.id)),
     );
   });
+
+  it('loads a 平胡 response demo, claims win, and settles with 1 fan', () => {
+    const session = new PlaySession();
+    session.loadPinghuWinDemo();
+    expect(session.snapshot().status).toBe('awaiting_player_win_response');
+    expect(session.snapshot().playerCanWin).toBe(true);
+
+    session.claimWin();
+    const snap = session.snapshot();
+    expect(snap.status).toBe('hand_won');
+    expect(snap.winSettlement?.winners).toEqual([
+      expect.objectContaining({ seat: 0, patterns: ['pinghu'], fan: 1 }),
+    ]);
+    expect(snap.events.some((e) => e.type === 'HandWon')).toBe(true);
+
+    const winnerSeat = snap.winSettlement!.winners[0]!.seat;
+    session.startNextHand(5302);
+    expect(session.snapshot().state!.dealer).toBe(winnerSeat);
+  });
+
+  it('lets the player pass a 平胡 opportunity without claiming that win', () => {
+    const session = new PlaySession();
+    session.loadPinghuWinDemo();
+    session.passWin();
+    const snap = session.snapshot();
+    // Pass abandons only the player's current chance; continued autoplay may
+    // still end the hand if an opponent later claims 胡.
+    expect(snap.winSettlement?.winners.some((w) => w.seat === 0) ?? false).toBe(false);
+    expect([
+      'awaiting_player_discard',
+      'awaiting_player_win_response',
+      'awaiting_player_claim_response',
+      'exhaustive_draw',
+      'hand_won',
+    ]).toContain(snap.status);
+  });
 });

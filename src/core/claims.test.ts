@@ -60,6 +60,7 @@ function openClaimWindow(opts: {
     seats,
     responseWindow: null,
     settlement: null,
+    winSettlement: null,
   };
 
   expect(totalTileCount(state)).toBe(FULL_SET_SIZE);

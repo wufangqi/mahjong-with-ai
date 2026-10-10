@@ -128,10 +128,40 @@ function isStandardWin(codes: readonly TileCode[], exposedMeldCount = 0): boolea
   return false;
 }
 
+/** Whitelist fan ids recognized by the core (ADR-0002). */
+export type FanPatternId = 'pinghu' | 'qidui' | 'shisanyao';
+
+export interface WinEvaluation {
+  patterns: FanPatternId[];
+  fan: number;
+}
+
+/**
+ * Score a completed hand. 平胡 only applies when no other listed pattern
+ * matches (spec: 平胡 exclusion). 七对 / 十三幺 require a fully concealed hand.
+ */
+export function evaluateWin(
+  codes: readonly TileCode[],
+  exposedMeldCount = 0,
+): WinEvaluation {
+  if (exposedMeldCount === 0) {
+    if (codes.length !== 14) return { patterns: [], fan: 0 };
+    const patterns: FanPatternId[] = [];
+    if (isSevenPairs(codes)) patterns.push('qidui');
+    if (isThirteenOrphans(codes)) patterns.push('shisanyao');
+    if (patterns.length === 0 && isStandardWin(codes, 0)) {
+      patterns.push('pinghu');
+    }
+    return { patterns, fan: patterns.length };
+  }
+
+  if (!isStandardWin(codes, exposedMeldCount)) return { patterns: [], fan: 0 };
+  return { patterns: ['pinghu'], fan: 1 };
+}
+
 /** True when face codes form a recognized winning hand under 爽胡规则 (fully concealed). */
 export function isWinningCodes(codes: readonly TileCode[]): boolean {
-  if (codes.length !== 14) return false;
-  return isSevenPairs(codes) || isThirteenOrphans(codes) || isStandardWin(codes, 0);
+  return evaluateWin(codes).patterns.length > 0;
 }
 
 /**
