@@ -99,6 +99,69 @@ test('平胡 claim plays basic scene and shows settlement with replay', async ({
   await expect(page.getByTestId('win-banner')).toHaveClass(/basic/);
 });
 
+test('theme hot-switch persists, keeps mid-scene palette, and retains prior theme', async ({ page }) => {
+  await page.goto('./');
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+
+  await expect(page.getByTestId('theme-select')).toBeVisible();
+  await expect(page.getByTestId('theme-select')).toHaveValue('classic-green');
+
+  const first = await page.evaluate(async () => {
+    const before = window.__play!.themeApplied().table.felt;
+    const result = await window.__play!.selectTheme('court-palace');
+    return {
+      before,
+      after: window.__play!.themeApplied().table.felt,
+      id: window.__play!.activeThemeId(),
+      transitionMs: result.transitionMs,
+      glyph: window.__play!.themeApplied().mark.glyph,
+      classicRetained: window.__play!.themeRetained('classic-green'),
+      classicRefs: window.__play!.themeRefCount('classic-green'),
+    };
+  });
+  expect(first.id).toBe('court-palace');
+  expect(first.glyph).toBe('福');
+  expect(first.after).not.toBe(first.before);
+  expect(first.transitionMs).toBeGreaterThanOrEqual(300);
+  expect(first.transitionMs).toBeLessThanOrEqual(600);
+  expect(first.classicRetained).toBe(true);
+  expect(first.classicRefs).toBeGreaterThanOrEqual(1);
+  await expect(page.locator('body')).toHaveAttribute('data-theme', 'court-palace');
+
+  await page.evaluate(() => window.__play!.loadPinghuWinDemo());
+  await page.getByTestId('claim-win').click();
+  await expect(page.getByTestId('win-banner')).toHaveClass(/basic/);
+
+  const midScene = await page.evaluate(async () => {
+    const captured = window.__play!.scenePalette();
+    await window.__play!.selectTheme('classic-green');
+    return {
+      capturedBanner: captured?.bannerBasic ?? null,
+      sceneAfterSwitch: window.__play!.scenePalette()?.bannerBasic ?? null,
+      appliedBanner: window.__play!.themeApplied().palette.bannerBasic,
+      active: window.__play!.activeThemeId(),
+    };
+  });
+  expect(midScene.capturedBanner).toBeTruthy();
+  expect(midScene.sceneAfterSwitch).toBe(midScene.capturedBanner);
+  expect(midScene.appliedBanner).not.toBe(midScene.capturedBanner);
+  expect(midScene.active).toBe('classic-green');
+
+  // Persistence: reload restores last selection
+  await page.reload();
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+  await expect(page.getByTestId('theme-select')).toHaveValue('classic-green');
+
+  await page.evaluate(async () => {
+    await window.__play!.selectTheme('court-palace');
+  });
+  await page.reload();
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+  await expect(page.getByTestId('theme-select')).toHaveValue('court-palace');
+  const restored = await page.evaluate(() => window.__play!.themeApplied().mark.glyph);
+  expect(restored).toBe('福');
+});
+
 test('effect preview still boots and plays fixed basic win', async ({ page }) => {
   await page.goto('./preview.html');
   await expect(page.locator('header h1')).toHaveText('AI 爽胡麻将');

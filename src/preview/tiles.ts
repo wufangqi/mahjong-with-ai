@@ -277,6 +277,11 @@ export const backMat = new THREE.MeshStandardMaterial({
   roughness: 0.3,
   metalness: 0.05,
 });
+
+/** Theme seam: update shared tile-back color without touching face materials. */
+export function setTileBackColor(hex: number): void {
+  backMat.color.setHex(hex);
+}
 const frontMats = new Map<TileCode, THREE.MeshStandardMaterial>();
 export function frontMaterial(code: TileCode): THREE.MeshStandardMaterial {
   let mat = frontMats.get(code);

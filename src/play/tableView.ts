@@ -9,12 +9,14 @@ import {
 } from '../core';
 import {
   createTile,
+  setTileBackColor,
   setTileCode,
   TILE_D,
   TILE_H,
   TILE_W,
   type PreviewTile,
 } from '../preview/tiles';
+import type { ThemeModules } from '../theme/types';
 
 type TileUserData = {
   tileId: string;
@@ -41,6 +43,17 @@ export class TableView {
   private riverGroups: THREE.Group[] = [];
   private meldGroups: THREE.Group[] = [];
   private dealerMarker: THREE.Mesh;
+  private feltMat: THREE.MeshStandardMaterial;
+  private railMat: THREE.MeshStandardMaterial;
+  private trimMat: THREE.MeshStandardMaterial;
+  private markSprite: THREE.Sprite;
+  private hemi: THREE.HemisphereLight;
+  private key: THREE.DirectionalLight;
+  private skyGradientTex: THREE.CanvasTexture | null = null;
+  private transitionFrom: ThemeModules | null = null;
+  private transitionTo: ThemeModules | null = null;
+  private transitionStartedAt = 0;
+  private transitionMs = 450;
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
   private dragTileId: string | null = null;
@@ -59,12 +72,16 @@ export class TableView {
     this.camera.position.set(0, 9.2, 11.5);
     this.camera.lookAt(0, 0.2, 0.4);
 
-    this.scene.add(new THREE.HemisphereLight(0xfff2d8, 0x1a3024, 0.85));
-    const key = new THREE.DirectionalLight(0xfff1dc, 1.35);
-    key.position.set(4, 12, 6);
-    key.castShadow = true;
-    this.scene.add(key);
+    this.hemi = new THREE.HemisphereLight(0xfff2d8, 0x1a3024, 0.85);
+    this.scene.add(this.hemi);
+    this.key = new THREE.DirectionalLight(0xfff1dc, 1.35);
+    this.key.position.set(4, 12, 6);
+    this.key.castShadow = true;
+    this.scene.add(this.key);
 
+    this.feltMat = new THREE.MeshStandardMaterial({ color: 0x0d5a3c, roughness: 0.92 });
+    this.railMat = new THREE.MeshStandardMaterial({ color: 0x5a2e18, roughness: 0.5 });
+    this.trimMat = new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.4, metalness: 0.35 });
     this.buildTable();
     this.scene.add(this.root);
 
@@ -89,6 +106,16 @@ export class TableView {
     this.dealerMarker.position.set(0, 0.05, 0);
     this.root.add(this.dealerMarker);
 
+    const markMat = new THREE.SpriteMaterial({
+      map: this.makeMarkTexture('雀', 0xc9a227),
+      transparent: true,
+      depthWrite: false,
+    });
+    this.markSprite = new THREE.Sprite(markMat);
+    this.markSprite.scale.set(1.4, 1.4, 1);
+    this.markSprite.position.set(0, 0.04, 0);
+    this.root.add(this.markSprite);
+
     for (let seat = 0; seat < 4; seat++) {
       this.opponentGroups.push(new THREE.Group());
       this.riverGroups.push(new THREE.Group());
@@ -102,20 +129,125 @@ export class TableView {
   }
 
   private buildTable(): void {
-    const felt = new THREE.Mesh(
-      new THREE.PlaneGeometry(14, 10),
-      new THREE.MeshStandardMaterial({ color: 0x0d5a3c, roughness: 0.92 }),
-    );
+    const felt = new THREE.Mesh(new THREE.PlaneGeometry(14, 10), this.feltMat);
     felt.rotation.x = -Math.PI / 2;
     felt.receiveShadow = true;
     this.root.add(felt);
 
-    const rail = new THREE.Mesh(
-      new THREE.BoxGeometry(15.2, 0.35, 11.2),
-      new THREE.MeshStandardMaterial({ color: 0x5a2e18, roughness: 0.5 }),
-    );
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(15.2, 0.35, 11.2), this.railMat);
     rail.position.y = -0.2;
     this.root.add(rail);
+
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(14.4, 0.06, 10.4), this.trimMat);
+    trim.position.y = 0.01;
+    this.root.add(trim);
+  }
+
+  /** Apply theme appearance; optional cross-fade over transitionMs (no black frame). */
+  applyTheme(modules: ThemeModules, opts?: { transitionMs?: number; from?: ThemeModules }): void {
+    const ms = opts?.transitionMs ?? 0;
+    if (ms > 0 && opts?.from) {
+      this.transitionFrom = opts.from;
+      this.transitionTo = modules;
+      this.transitionStartedAt = performance.now();
+      this.transitionMs = ms;
+      this.applyThemeInstant(opts.from);
+      return;
+    }
+    this.transitionFrom = null;
+    this.transitionTo = null;
+    this.applyThemeInstant(modules);
+  }
+
+  private applyThemeInstant(modules: ThemeModules): void {
+    this.feltMat.color.setHex(modules.table.felt);
+    this.railMat.color.setHex(modules.table.rail);
+    this.trimMat.color.setHex(modules.table.trim);
+    (this.dealerMarker.material as THREE.MeshStandardMaterial).color.setHex(modules.table.trim);
+
+    this.applySky(modules);
+    const fog = this.scene.fog;
+    if (fog instanceof THREE.Fog) {
+      fog.color.setHex(modules.fog.color);
+      fog.near = modules.fog.near;
+      fog.far = modules.fog.far;
+    }
+
+    this.hemi.color.setHex(modules.lights.hemiSky);
+    this.hemi.groundColor.setHex(modules.lights.hemiGround);
+    this.hemi.intensity = modules.lights.hemiIntensity;
+    this.key.color.setHex(modules.lights.key);
+    this.key.intensity = modules.lights.keyIntensity;
+
+    setTileBackColor(modules.tileBack);
+
+    const mat = this.markSprite.material as THREE.SpriteMaterial;
+    mat.map?.dispose();
+    mat.map = this.makeMarkTexture(modules.mark.glyph, modules.mark.color);
+    mat.needsUpdate = true;
+  }
+
+  private applySky(modules: ThemeModules): void {
+    if (this.skyGradientTex) {
+      this.skyGradientTex.dispose();
+      this.skyGradientTex = null;
+    }
+    if (modules.sky.kind === 'color') {
+      this.scene.background = new THREE.Color(modules.sky.color);
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = 4;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      this.scene.background = new THREE.Color(0x2a1028);
+      return;
+    }
+    const g = ctx.createLinearGradient(0, 0, 0, 256);
+    for (const stop of modules.sky.stops) g.addColorStop(stop.t, stop.color);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 4, 256);
+    this.skyGradientTex = new THREE.CanvasTexture(canvas);
+    this.skyGradientTex.colorSpace = THREE.SRGBColorSpace;
+    this.scene.background = this.skyGradientTex;
+  }
+
+  private makeMarkTexture(glyph: string, color: number): THREE.CanvasTexture {
+    const c = document.createElement('canvas');
+    c.width = 256;
+    c.height = 256;
+    const ctx = c.getContext('2d')!;
+    ctx.clearRect(0, 0, 256, 256);
+    ctx.strokeStyle = `#${color.toString(16).padStart(6, '0')}`;
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.arc(128, 128, 100, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(128, 128, 84, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.font = 'bold 110px "STKaiti","KaiTi","Noto Serif CJK SC",serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(glyph, 128, 138);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  private lerpHex(a: number, b: number, t: number): number {
+    const ar = (a >> 16) & 0xff;
+    const ag = (a >> 8) & 0xff;
+    const ab = a & 0xff;
+    const br = (b >> 16) & 0xff;
+    const bg = (b >> 8) & 0xff;
+    const bb = b & 0xff;
+    const r = Math.round(ar + (br - ar) * t);
+    const g = Math.round(ag + (bg - ag) * t);
+    const bl = Math.round(ab + (bb - ab) * t);
+    return (r << 16) | (g << 8) | bl;
   }
 
   private onResize(): void {
@@ -292,6 +424,21 @@ export class TableView {
   }
 
   render(): void {
+    if (this.transitionFrom && this.transitionTo) {
+      const t = Math.min(1, (performance.now() - this.transitionStartedAt) / this.transitionMs);
+      const from = this.transitionFrom;
+      const to = this.transitionTo;
+      this.feltMat.color.setHex(this.lerpHex(from.table.felt, to.table.felt, t));
+      this.railMat.color.setHex(this.lerpHex(from.table.rail, to.table.rail, t));
+      this.trimMat.color.setHex(this.lerpHex(from.table.trim, to.table.trim, t));
+      this.hemi.intensity = from.lights.hemiIntensity + (to.lights.hemiIntensity - from.lights.hemiIntensity) * t;
+      this.key.intensity = from.lights.keyIntensity + (to.lights.keyIntensity - from.lights.keyIntensity) * t;
+      if (t >= 1) {
+        this.applyThemeInstant(to);
+        this.transitionFrom = null;
+        this.transitionTo = null;
+      }
+    }
     this.renderer.render(this.scene, this.camera);
   }
 }

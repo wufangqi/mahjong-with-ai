@@ -1,4 +1,5 @@
 import type { PlaySessionSnapshot } from '../game/session';
+import type { ThemeId, ThemeModules, ThemePalette, ThemeSelectResult } from '../theme/types';
 import type { WinScenePlan } from './winPresentation';
 
 declare global {
@@ -19,6 +20,13 @@ declare global {
       loadPinghuWinDemo: () => void;
       replayScene: () => void;
       lastScenePlans: () => WinScenePlan[];
+      selectTheme: (id: ThemeId) => Promise<ThemeSelectResult>;
+      activeThemeId: () => ThemeId;
+      themeApplied: () => ThemeModules;
+      scenePalette: () => ThemePalette | null;
+      themeNotices: () => string[];
+      themeRefCount: (id: ThemeId) => number;
+      themeRetained: (id: ThemeId) => boolean;
     };
   }
 }
