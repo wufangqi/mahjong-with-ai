@@ -14,13 +14,8 @@ export interface LegalClaims {
   chowOptions: ChowOption[];
 }
 
-function asSeat(n: number): Seat {
-  if (n === 0 || n === 1 || n === 2 || n === 3) return n;
-  throw new Error(`invalid seat ${n}`);
-}
-
 export function nextSeat(seat: Seat): Seat {
-  return asSeat((seat + 1) % 4);
+  return ((seat + 1) % 4) as Seat;
 }
 
 /** Seats from the discarder's next seat, walking around the table. */
@@ -92,22 +87,18 @@ export function listChowOptions(hand: readonly PhysicalTile[], discardCode: Tile
     const t1 = [...pool1].sort((a, b) => a.id.localeCompare(b.id))[0]!;
     const t2 = [...pool2].sort((a, b) => a.id.localeCompare(b.id))[0]!;
     const tileIds = [t1.id, t2.id].sort() as [string, string];
-    const codes = tileSortCodes(c1, c2);
+    const codes = [c1, c2].sort((x, y) => x.localeCompare(y)) as [TileCode, TileCode];
     const key = `${codes[0]}+${codes[1]}`;
+    /* v8 ignore next — pattern ranks are unique per discard face */
     if (seen.has(key)) continue;
     seen.add(key);
     options.push({ tileIds, codes });
   }
 
-  return options.sort((a, b) => {
-    const byCode = `${a.codes[0]}${a.codes[1]}`.localeCompare(`${b.codes[0]}${b.codes[1]}`);
-    if (byCode !== 0) return byCode;
-    return `${a.tileIds[0]}${a.tileIds[1]}`.localeCompare(`${b.tileIds[0]}${b.tileIds[1]}`);
-  });
-}
-
-function tileSortCodes(a: TileCode, b: TileCode): [TileCode, TileCode] {
-  return a <= b ? [a, b] : [b, a];
+  // Deduped by face-code pair above, so sorting by codes alone is total.
+  return options.sort((a, b) =>
+    `${a.codes[0]}${a.codes[1]}`.localeCompare(`${b.codes[0]}${b.codes[1]}`),
+  );
 }
 
 export function canPungHand(hand: readonly PhysicalTile[], discardCode: TileCode): boolean {

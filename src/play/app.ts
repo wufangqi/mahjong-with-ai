@@ -54,6 +54,7 @@ import {
   type SceneTier,
   type WinScenePlan,
 } from './winPresentation';
+import { playWinTimelineTracks, type PlayWinTimelineHandle } from './winTimeline';
 
 export type BootPlayAppOptions = {
   onStage?: (stage: LoadStageId) => void;
@@ -369,7 +370,7 @@ export function bootPlayApp(opts: BootPlayAppOptions = {}): Promise<void> {
   const gpuProbe = probeFromRenderer(table.renderer);
   let lastHandWonEventCount = 0;
   let lastEventCount = 0;
-  let sceneReleaseTimer: number | null = null;
+  let activeTimeline: PlayWinTimelineHandle | null = null;
   let lastFrameAt = performance.now();
   let fpsEma = 60;
   let renderedFrameCount = 0;
@@ -455,21 +456,46 @@ export function bootPlayApp(opts: BootPlayAppOptions = {}): Promise<void> {
     }
   };
 
+  const clearActiveTimeline = (): void => {
+    activeTimeline?.cancel();
+    activeTimeline = null;
+    table.setWinCameraFocus(null);
+    if (banner.classList.contains('show')) banner.className = '';
+    themes.releaseScenePalette();
+    syncThemeChrome();
+  };
+
   const showScene = (plan: WinScenePlan): void => {
+    clearActiveTimeline();
     const palette = themes.captureScenePalette();
     document.documentElement.style.setProperty('--banner-basic', palette.bannerBasic);
     bannerMain.textContent = plan.bannerMain;
     bannerSub.textContent = plan.bannerSub;
-    banner.className = `show ${plan.tier}`;
+    banner.className = plan.tier;
     banner.style.setProperty('--delay', '0s');
-    audio.play(sfxForSceneTier(plan.tier));
-    if (sceneReleaseTimer !== null) window.clearTimeout(sceneReleaseTimer);
-    sceneReleaseTimer = window.setTimeout(() => {
-      themes.releaseScenePalette();
-      syncThemeChrome();
-      if (banner.classList.contains('show')) banner.className = '';
-      sceneReleaseTimer = null;
-    }, 2400);
+
+    activeTimeline = playWinTimelineTracks({
+      plan,
+      defer: (fn, ms) => window.setTimeout(fn, ms),
+      cancelDefer: (h) => window.clearTimeout(h as number),
+      onBannerShow: () => {
+        banner.className = `show ${plan.tier}`;
+      },
+      onBannerHide: () => {
+        if (banner.classList.contains('show')) banner.className = '';
+        themes.releaseScenePalette();
+        syncThemeChrome();
+      },
+      onAudio: () => {
+        audio.play(sfxForSceneTier(plan.tier));
+      },
+      onCameraStart: (seat, durationMs) => {
+        table.setWinCameraFocus(seat, durationMs);
+      },
+      onCameraEnd: () => {
+        table.setWinCameraFocus(null);
+      },
+    });
   };
 
   scenes.onPlay(() => {
@@ -480,6 +506,7 @@ export function bootPlayApp(opts: BootPlayAppOptions = {}): Promise<void> {
     showScene(plan);
   });
   scenes.onIdle(() => {
+    clearActiveTimeline();
     setSceneChrome(false);
     refresh();
   });

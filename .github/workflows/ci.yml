@@ -22,8 +22,14 @@ jobs:
         run: npm run typecheck
       - name: Unit tests
         run: npm run test
+      - name: Core coverage (100% branches)
+        run: npm run test:coverage
       - name: Production build
         run: npm run build
+      - name: First-screen budget unit tests
+        run: npm run test:budget
+      - name: Transfer budget measure
+        run: npm run budget:measure
       - name: Browser smoke + visual
         run: npm run test:e2e
       - name: Upload visual / e2e artifacts

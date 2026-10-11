@@ -1,4 +1,5 @@
 import { PLAYER_SEAT, seatsAfter, type FanPatternId, type Seat, type WinnerResult } from '../core';
+import { sceneDurationForTier } from './winTimeline';
 
 /** Presentation-only scene tier (never appears on core HandWon). */
 export type SceneTier = 'basic' | 'big' | 'top';
@@ -37,6 +38,7 @@ const PATTERN_LABEL: Record<FanPatternId, string> = {
 
 const TIER_RANK: Record<SceneTier, number> = { basic: 0, big: 1, top: 2 };
 
+/** Fallback only when an explicit override is omitted and timeline lookup is unavailable. */
 const DEFAULT_SCENE_DURATION_MS = 2400;
 
 /** Map domain patterns to the highest presentation tier (not total fan). */
@@ -89,7 +91,13 @@ export interface WinSceneSchedulerDeps {
   defer: (fn: () => void, delayMs: number) => unknown;
   /** Cancel a handle returned by `defer`. */
   cancelDefer?: (handle: unknown) => void;
+  /**
+   * Optional fixed duration override (tests). When omitted, each scene uses
+   * the shipped WIN_TIMELINES duration for its tier.
+   */
   sceneDurationMs?: number;
+  /** Resolve per-plan duration; defaults to WIN_TIMELINES[tier].durationMs. */
+  durationForPlan?: (plan: WinScenePlan) => number;
   playerSeat?: Seat;
 }
 
@@ -102,7 +110,8 @@ export class WinSceneScheduler {
   private readonly now: () => number;
   private readonly defer: (fn: () => void, delayMs: number) => unknown;
   private readonly cancelDefer: ((handle: unknown) => void) | null;
-  private readonly sceneDurationMs: number;
+  private readonly sceneDurationMs: number | null;
+  private readonly durationForPlan: (plan: WinScenePlan) => number;
   private readonly playerSeat: Seat;
 
   private lastPlans: WinScenePlan[] = [];
@@ -130,7 +139,10 @@ export class WinSceneScheduler {
     this.now = deps.now;
     this.defer = deps.defer;
     this.cancelDefer = deps.cancelDefer ?? null;
-    this.sceneDurationMs = deps.sceneDurationMs ?? DEFAULT_SCENE_DURATION_MS;
+    this.sceneDurationMs = deps.sceneDurationMs ?? null;
+    this.durationForPlan =
+      deps.durationForPlan ??
+      ((plan) => this.sceneDurationMs ?? sceneDurationForTier(plan.tier) ?? DEFAULT_SCENE_DURATION_MS);
     this.playerSeat = deps.playerSeat ?? PLAYER_SEAT;
   }
 
@@ -252,7 +264,7 @@ export class WinSceneScheduler {
       return;
     }
 
-    this.timer = this.defer(() => this.advance(), this.sceneDurationMs);
+    this.timer = this.defer(() => this.advance(), this.durationForPlan(plan));
   }
 
   private advance(): void {

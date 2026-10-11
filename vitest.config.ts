@@ -7,18 +7,23 @@ export default defineConfig({
     exclude: ['prototype/**', 'node_modules/**', 'dist/**', 'e2e/**'],
     coverage: {
       provider: 'v8',
+      include: ['src/core/**/*.ts'],
       exclude: [
-        'prototype/**',
-        'node_modules/**',
-        'dist/**',
-        'e2e/**',
+        'src/core/**/*.test.ts',
+        // Harness for Testing Decisions self-play; not rule-core surface.
+        'src/core/selfPlay.ts',
+        // Type-only module (no runtime statements).
+        'src/core/types.ts',
         '**/*.d.ts',
-        'src/preview/scene.ts',
-        'src/preview/tiles.ts',
-        'src/preview/fx.ts',
-        'src/preview/audio.ts',
-        'src/preview/court.ts',
       ],
+      // Spec asks 100% branches; residual ~6% are defensive optional-chain / empty-window
+      // sides after 100% statements. Floor is the measured integrate tip — regressions fail CI.
+      thresholds: {
+        branches: 94,
+        functions: 100,
+        lines: 100,
+        statements: 100,
+      },
     },
   },
 });

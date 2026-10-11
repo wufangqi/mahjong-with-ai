@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit --pretty false",
-    "test": "vitest run",
+    "test": "vitest run --exclude 'src/budget/**'",
+    "test:budget": "vitest run src/budget",
+    "test:coverage": "vitest run --coverage --exclude 'src/budget/**' --exclude 'src/core/selfPlay.test.ts'",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:visual": "playwright test e2e/visual.spec.ts",
@@ -16,7 +18,7 @@
     "budget:measure": "node tools/budget/measure.mjs",
     "budget:dri": "bash tools/budget/ensure-dri-acl.sh",
     "budget:fps": "bash tools/budget/ensure-dri-acl.sh && node tools/budget/measure-fps.mjs",
-    "ci": "npm run typecheck && npm run test && npm run build && npm run budget:measure && npm run test:e2e"
+    "ci": "npm run typecheck && npm run test && npm run test:coverage && npm run build && npm run test:budget && npm run budget:measure && npm run test:e2e"
   },
   "dependencies": {
     "three": "0.160.0"
@@ -25,6 +27,7 @@
     "@playwright/test": "^1.49.1",
     "@types/node": "^26.6.5",
     "@types/three": "0.160.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "fontkit": "^2.0.4",
     "jsdom": "^25.0.1",
     "typescript": "^5.7.2",

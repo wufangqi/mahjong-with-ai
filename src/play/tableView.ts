@@ -81,6 +81,12 @@ export class TableView {
   private composer: EffectComposer | null = null;
   private bloomPass: UnrealBloomPass | null = null;
   private lastThemeModules: ThemeModules | null = null;
+  private readonly camBase = new THREE.Vector3(0, 9.2, 11.5);
+  private readonly camLookBase = new THREE.Vector3(0, 0.2, 0.4);
+  private winFocusSeat: Seat | null = null;
+  private winFocusStrength = 0;
+  private winFocusStartedAt = 0;
+  private winFocusDurationMs = 900;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -93,8 +99,8 @@ export class TableView {
     this.scene.fog = new THREE.Fog(0x14261c, 24, 55);
 
     this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 80);
-    this.camera.position.set(0, 9.2, 11.5);
-    this.camera.lookAt(0, 0.2, 0.4);
+    this.camera.position.copy(this.camBase);
+    this.camera.lookAt(this.camLookBase);
 
     this.hemi = new THREE.HemisphereLight(0xfff2d8, 0x1a3024, 0.85);
     this.scene.add(this.hemi);
@@ -226,6 +232,61 @@ export class TableView {
 
   tileBackPattern(): 'solid' | 'cloud' {
     return getTileBackPattern();
+  }
+
+  /**
+   * Focus the gameplay camera on a winner seat for `durationMs` (US78).
+   * Pass `null` to clear an active win-scene focus immediately.
+   */
+  setWinCameraFocus(seat: Seat | null, durationMs = 900): void {
+    if (seat === null) {
+      this.winFocusSeat = null;
+      this.winFocusStrength = 0;
+      this.camera.position.copy(this.camBase);
+      this.camera.lookAt(this.camLookBase);
+      return;
+    }
+    this.winFocusSeat = seat;
+    this.winFocusStrength = 1;
+    this.winFocusStartedAt = performance.now();
+    this.winFocusDurationMs = Math.max(1, durationMs);
+  }
+
+  /** Test/harness: current win-focus seat, if any. */
+  winCameraFocusSeat(): Seat | null {
+    return this.winFocusSeat;
+  }
+
+  private seatFocusTarget(seat: Seat): THREE.Vector3 {
+    const yaw = SEAT_YAW[seat];
+    return new THREE.Vector3(0, 0.35, 3.2).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+  }
+
+  private applyWinCameraFocus(now: number): void {
+    if (this.winFocusSeat === null || this.winFocusStrength <= 0) {
+      this.camera.position.copy(this.camBase);
+      this.camera.lookAt(this.camLookBase);
+      return;
+    }
+    const elapsed = now - this.winFocusStartedAt;
+    const u = Math.min(1, elapsed / this.winFocusDurationMs);
+    // Ease in then hold, ease out in the last 25%.
+    let strength = this.winFocusStrength;
+    if (u < 0.2) strength *= u / 0.2;
+    else if (u > 0.75) strength *= 1 - (u - 0.75) / 0.25;
+    if (u >= 1) {
+      this.winFocusSeat = null;
+      this.winFocusStrength = 0;
+      this.camera.position.copy(this.camBase);
+      this.camera.lookAt(this.camLookBase);
+      return;
+    }
+    const target = this.seatFocusTarget(this.winFocusSeat);
+    const look = this.camLookBase.clone().lerp(target, 0.75 * strength);
+    const offset = target.clone().normalize().multiplyScalar(1.8 * strength);
+    this.camera.position.copy(this.camBase).add(offset);
+    this.camera.position.y += 0.35 * strength;
+    this.camera.lookAt(look);
   }
 
   /** Apply 画质档 to DPR, shadows, Bloom, particles, and sky simplification. */
@@ -778,6 +839,7 @@ export class TableView {
         this.transitionTo = null;
       }
     }
+    this.applyWinCameraFocus(now);
     this.tickParticles(now);
     this.renderer.info.autoReset = true;
     this.renderer.info.reset();
