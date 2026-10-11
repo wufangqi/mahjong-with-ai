@@ -16,11 +16,11 @@ test('play mode deals a seeded hand and continues after a player discard', async
   await expect(page.getByTestId('meta')).toContainText('实体牌 136/136');
   await expect(page.getByTestId('hand-index')).toContainText('第 1 局');
 
-  const discarded = await page.evaluate(() => {
+  const discarded = await page.evaluate(async () => {
     const snap = window.__play!.snapshot();
     const drawn = snap.state!.seats[0].drawn!;
-    window.__play!.clickTile(drawn.id);
-    window.__play!.clickTile(drawn.id);
+    await window.__play!.clickTile(drawn.id);
+    await window.__play!.clickTile(drawn.id);
     return { id: drawn.id, status: window.__play!.snapshot().status };
   });
 
@@ -29,6 +29,7 @@ test('play mode deals a seeded hand and continues after a player discard', async
     'awaiting_player_discard',
     'awaiting_player_claim_response',
     'awaiting_player_win_response',
+    'awaiting_ai',
     'exhaustive_draw',
     'hand_won',
   ]).toContain(discarded.status);
@@ -45,9 +46,15 @@ test('auto-play reaches 流局 settlement with revealed hands', async ({ page })
   await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
 
   await page.getByTestId('seed-input').fill('42');
-  await page.getByTestId('start-match').click();
+  await page.evaluate(async () => {
+    await window.__play!.startMatch(42);
+  });
+  await expect(page.getByTestId('main-menu')).toBeHidden();
+  await expect(page.getByTestId('status')).toContainText('出牌');
 
-  await page.evaluate(() => window.__play!.autoPlayToDraw());
+  await page.evaluate(async () => {
+    await window.__play!.autoPlayToDraw();
+  });
 
   await expect(page.getByTestId('draw-panel')).toBeVisible();
   await expect(page.getByTestId('draw-panel')).toContainText('流局');
@@ -78,7 +85,9 @@ test('auto-play reaches 流局 settlement with revealed hands', async ({ page })
   expect(settlement.concealedPlusMelds).toEqual([13, 13, 13, 13]);
 
   const dealerBefore = settlement.dealer;
-  await page.getByTestId('next-hand').click();
+  await page.evaluate(async () => {
+    await window.__play!.startNextHand();
+  });
   const afterNext = await page.evaluate(() => ({
     dealer: window.__play!.snapshot().state!.dealer,
     handIndex: window.__play!.matchSnapshot().handIndex,
@@ -87,7 +96,9 @@ test('auto-play reaches 流局 settlement with revealed hands', async ({ page })
   expect(afterNext.handIndex).toBe(2);
   await expect(page.getByTestId('hand-index')).toContainText('第 2 局');
 
-  await page.evaluate(() => window.__play!.autoPlayToDraw());
+  await page.evaluate(async () => {
+    await window.__play!.autoPlayToDraw();
+  });
   await page.getByTestId('end-match').click();
   await expect(page.getByTestId('main-menu')).toBeVisible();
   const ended = await page.evaluate(() => window.__play!.matchSnapshot());
@@ -100,23 +111,67 @@ test('平胡 claim plays basic scene and shows settlement with replay', async ({
   await page.goto('./');
   await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
 
-  await page.evaluate(() => window.__play!.loadPinghuWinDemo());
+  await page.evaluate(async () => {
+    await window.__play!.loadPinghuWinDemo();
+  });
   await expect(page.getByTestId('response-bar')).toBeVisible();
   await expect(page.getByTestId('claim-win')).toBeVisible();
 
-  await page.getByTestId('claim-win').click();
+  await page.evaluate(async () => {
+    await window.__play!.claimWin();
+  });
 
+  await expect(page.getByTestId('scene-bar')).toBeVisible();
+  await expect(page.getByTestId('win-banner')).toHaveClass(/basic/);
+  const duringScene = await page.evaluate(() => ({
+    playing: window.__play!.isScenePlaying(),
+    tier: window.__play!.lastScenePlans()[0]?.tier,
+    masterVisible: !document.querySelector('[data-testid="master-volume"]')?.closest('[hidden]'),
+    qualityHidden: getComputedStyle(document.querySelector('[data-testid="quality-select"]')!.closest('.quality-field')!).display === 'none',
+    themeOk: document.querySelector('[data-testid="theme-select"]') != null,
+    reducedOk: document.querySelector('[data-testid="reduced-motion"]') != null,
+  }));
+  expect(duringScene.playing).toBe(true);
+  expect(duringScene.tier).toBe('basic');
+  expect(duringScene.qualityHidden).toBe(true);
+  expect(duringScene.themeOk).toBe(true);
+  expect(duringScene.reducedOk).toBe(true);
+
+  await page.evaluate(() => window.__play!.skipScene());
   await expect(page.getByTestId('win-panel')).toBeVisible();
   await expect(page.getByTestId('win-summary')).toContainText('平胡');
   await expect(page.getByTestId('win-summary')).toContainText('1 番');
   await expect(page.getByTestId('status')).toContainText('平胡');
-
-  const plans = await page.evaluate(() => window.__play!.lastScenePlans());
-  expect(plans[0]?.tier).toBe('basic');
-  await expect(page.getByTestId('win-banner')).toHaveClass(/basic/);
+  await expect(page.getByTestId('replay-seat-0')).toBeVisible();
 
   await page.getByTestId('replay-scene').click();
+  await expect(page.getByTestId('scene-bar')).toBeVisible();
   await expect(page.getByTestId('win-banner')).toHaveClass(/basic/);
+  await page.evaluate(() => window.__play!.skipScene());
+  await expect(page.getByTestId('win-panel')).toBeVisible();
+});
+
+test('audio volumes and reduced motion persist; auto-skip is available', async ({ page }) => {
+  await page.goto('./');
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+
+  await page.evaluate(() => {
+    window.__play!.setMasterVolume(0.35);
+    window.__play!.setSfxVolume(0.55);
+    window.__play!.setReducedMotion('on');
+    window.__play!.setAutoSkipOpponent(true);
+  });
+  expect(await page.evaluate(() => window.__play!.masterVolume())).toBeCloseTo(0.35);
+  expect(await page.evaluate(() => window.__play!.sfxVolume())).toBeCloseTo(0.55);
+  expect(await page.evaluate(() => window.__play!.reducedMotionEnabled())).toBe(true);
+  expect(await page.evaluate(() => window.__play!.autoSkipOpponent())).toBe(true);
+
+  await page.reload();
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+  expect(await page.evaluate(() => window.__play!.masterVolume())).toBeCloseTo(0.35);
+  expect(await page.evaluate(() => window.__play!.sfxVolume())).toBeCloseTo(0.55);
+  expect(await page.evaluate(() => window.__play!.reducedMotionMode())).toBe('on');
+  expect(await page.evaluate(() => window.__play!.autoSkipOpponent())).toBe(true);
 });
 
 test('theme hot-switch persists, keeps mid-scene palette, and retains prior theme', async ({ page }) => {
@@ -283,8 +338,8 @@ test('continues the latest save after reload and clears it on end', async ({ pag
   const before = await page.evaluate(async () => {
     const snap = window.__play!.snapshot();
     const drawn = snap.state!.seats[0].drawn!;
-    window.__play!.clickTile(drawn.id);
-    window.__play!.clickTile(drawn.id);
+    await window.__play!.clickTile(drawn.id);
+    await window.__play!.clickTile(drawn.id);
     await window.__play!.waitPersist();
     return {
       rngState: window.__play!.snapshot().state!.rngState,
@@ -309,7 +364,9 @@ test('continues the latest save after reload and clears it on end', async ({ pag
   expect(after.rngState).toBe(before.rngState);
   expect(after.riverTail).toBe(before.riverTail);
 
-  await page.evaluate(() => window.__play!.autoPlayToDraw());
+  await page.evaluate(async () => {
+    await window.__play!.autoPlayToDraw();
+  });
   await page.getByTestId('end-match').click();
   await page.evaluate(async () => {
     await window.__play!.waitPersist();
@@ -320,13 +377,14 @@ test('continues the latest save after reload and clears it on end', async ({ pag
 });
 
 test('developer replay uses recorded actions without calling external AI', async ({ page }) => {
+  test.setTimeout(90_000);
   await page.goto('./');
   await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
 
   await page.getByTestId('seed-input').fill('42');
   await page.getByTestId('start-match').click();
   const log = await page.evaluate(async () => {
-    window.__play!.autoPlayToDraw();
+    await window.__play!.autoPlayToDraw();
     await window.__play!.waitPersist();
     return window.__play!.actionLog();
   });
@@ -349,6 +407,67 @@ test('developer replay uses recorded actions without calling external AI', async
   expect(replayed.phase).toBe('exhaustive_draw');
   expect(replayed.wall).toBe(0);
   expect(replayed.logLen).toBe(log.length);
+});
+
+test('developer replay does not overwrite the continue save', async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto('./');
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+
+  // 1) Capture a full action log, then clear that match.
+  await page.getByTestId('seed-input').fill('7');
+  await page.getByTestId('start-match').click();
+  const fullLog = await page.evaluate(async () => {
+    await window.__play!.autoPlayToDraw();
+    await window.__play!.waitPersist();
+    return window.__play!.actionLog();
+  });
+  await page.getByTestId('end-match').click();
+  await page.evaluate(async () => {
+    await window.__play!.waitPersist();
+    await window.__play!.refreshPersistMenu();
+  });
+
+  // 2) Create an unfinished continue save.
+  await page.getByTestId('seed-input').fill('42');
+  await page.getByTestId('start-match').click();
+  const mid = await page.evaluate(async () => {
+    const snap = window.__play!.snapshot();
+    const drawn = snap.state!.seats[0].drawn!;
+    await window.__play!.clickTile(drawn.id);
+    await window.__play!.clickTile(drawn.id);
+    await window.__play!.waitPersist();
+    return {
+      rngState: window.__play!.snapshot().state!.rngState,
+      riverTail: window.__play!.snapshot().state!.seats[0].river.at(-1)?.id ?? null,
+    };
+  });
+
+  // 3) Developer replay must not replace activeSave.
+  await page.evaluate((commands) => {
+    window.__play!.replayActionLog(commands);
+  }, fullLog);
+  await page.evaluate(async () => {
+    await window.__play!.waitPersist();
+  });
+  expect(await page.evaluate(() => window.__play!.snapshot().state!.phase)).toBe('exhaustive_draw');
+
+  await page.getByTestId('end-match').click();
+  await page.evaluate(async () => {
+    await window.__play!.waitPersist();
+    await window.__play!.refreshPersistMenu();
+  });
+  await expect(page.getByTestId('continue-match')).toBeVisible();
+
+  await page.getByTestId('continue-match').click();
+  const resumed = await page.evaluate(() => ({
+    rngState: window.__play!.snapshot().state!.rngState,
+    riverTail: window.__play!.snapshot().state!.seats[0].river.at(-1)?.id ?? null,
+    phase: window.__play!.snapshot().state!.phase,
+  }));
+  expect(resumed.rngState).toBe(mid.rngState);
+  expect(resumed.riverTail).toBe(mid.riverTail);
+  expect(resumed.phase).not.toBe('exhaustive_draw');
 });
 
 test('refuses incompatible saves visibly and still allows export', async ({ page }) => {

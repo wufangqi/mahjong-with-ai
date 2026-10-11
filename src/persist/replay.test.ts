@@ -5,10 +5,10 @@ import { PlaySession } from '../game/session';
 import { replayCommands } from './replay';
 
 describe('replayCommands', () => {
-  it('replays recorded final actions to the same terminal state without calling AI', () => {
+  it('replays recorded final actions to the same terminal state without calling AI', async () => {
     const match = new MatchSession();
-    match.startMatch(42);
-    match.hand.autoPlayPlayerFirstLegal();
+    await match.startMatch(42);
+    await match.hand.autoPlayPlayerFirstLegal();
     const log = match.hand.getActionLog();
     expect(log.length).toBeGreaterThan(1);
     expect(log[0]).toEqual({ type: 'StartHand', seed: 42 });
@@ -30,14 +30,14 @@ describe('replayCommands', () => {
     expect(choose).not.toHaveBeenCalled();
   });
 
-  it('does not invoke easy DecisionProvider during command replay', () => {
+  it('does not invoke easy DecisionProvider during command replay', async () => {
     const easy = createEasyDecisionProvider();
     const spy = vi.spyOn(easy, 'choose');
     const session = new PlaySession(easy);
-    session.start(99);
+    await session.start(99);
     const tileId = session.snapshot().state!.seats[0].drawn!.id;
-    session.clickTile(tileId);
-    session.clickTile(tileId);
+    await session.clickTile(tileId);
+    await session.clickTile(tileId);
     const log = session.getActionLog();
     spy.mockClear();
 

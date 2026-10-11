@@ -7,7 +7,10 @@ import type { DecisionAction, DecisionProvider, SeatVisibleState } from './types
  */
 export function createEasyDecisionProvider(): DecisionProvider {
   return {
-    choose(view: SeatVisibleState, legalActions: readonly DecisionAction[]): DecisionAction {
+    async choose(
+      view: SeatVisibleState,
+      legalActions: readonly DecisionAction[],
+    ): Promise<DecisionAction> {
       if (legalActions.length === 0) {
         throw new Error(`easy: no legal actions for seat ${view.seat}`);
       }

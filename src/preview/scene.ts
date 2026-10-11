@@ -8,12 +8,40 @@ import { visualRandom } from '../visual/rng';
 import { TILE_W, TILE_H, TILE_D, GOLD, FONT_SERIF, createTile, setTileCode, tileGeometry, sideMat, backMat, setAnisotropy, frontMaterial } from './tiles';
 import { ParticlePool, makePillar, makeRipple, sampleGlyph, makePointsMaterial, pointUniforms, ease, clamp01, type FxMesh } from './fx';
 import { probeFromRenderer } from '../particles/probe';
+import { dampenCameraMotion, ReducedMotionController } from '../motion';
 import { sfx, stopAll as stopAudio, setMuted, isMuted } from './audio';
 import { createHeavenCourt } from './court';
 import { FIXED_HANDS, type HandName } from './fixedHands';
 import { timelineFor } from './timelines';
 import { applyPreviewTheme } from './applyPreviewTheme';
 import { getPreviewThemeId, getPreviewThemeModules } from './themeBridge';
+
+const previewMotion = new ReducedMotionController({
+  storage: {
+    getItem: (k) => {
+      try {
+        return window.localStorage.getItem(k);
+      } catch {
+        return null;
+      }
+    },
+    setItem: (k, v) => {
+      try {
+        window.localStorage.setItem(k, v);
+      } catch {
+        /* ignore */
+      }
+    },
+    removeItem: (k) => {
+      try {
+        window.localStorage.removeItem(k);
+      } catch {
+        /* ignore */
+      }
+    },
+  },
+});
+previewMotion.restore();
 
 const visualCfg = getPreparedVisualConfig();
 const VIEW_W = visualCfg?.enabled ? visualCfg.width : window.innerWidth;
@@ -691,17 +719,22 @@ function simulate(dt: number, opts: { render: boolean }): void {
   sparks.update(dt * st.timeScale);
   court.update(dt);
 
+  const motion = previewMotion.isEnabled()
+    ? dampenCameraMotion({ shake: st.shake, dolly: st.dolly, turnRate: 1 })
+    : { shake: st.shake, dolly: st.dolly, turnRate: 1 };
+  const turn = motion.turnRate ?? 1;
+
   if (!visualCfg?.enabled) {
-    if (keys.has('ArrowLeft')) look.yaw += dt * 0.9;
-    if (keys.has('ArrowRight')) look.yaw -= dt * 0.9;
-    if (keys.has('ArrowUp')) look.pitch += dt * 0.7;
-    if (keys.has('ArrowDown')) look.pitch -= dt * 0.7;
+    if (keys.has('ArrowLeft')) look.yaw += dt * 0.9 * turn;
+    if (keys.has('ArrowRight')) look.yaw -= dt * 0.9 * turn;
+    if (keys.has('ArrowUp')) look.pitch += dt * 0.7 * turn;
+    if (keys.has('ArrowDown')) look.pitch -= dt * 0.7 * turn;
   }
   look.yaw = THREE.MathUtils.clamp(look.yaw, -1.15, 1.15);
   look.pitch = THREE.MathUtils.clamp(look.pitch, -0.62, 0.42);
 
   camDir.copy(camBase).sub(CAM_TARGET).normalize();
-  camera.position.copy(camBase).addScaledVector(camDir, st.dolly * 0.45);
+  camera.position.copy(camBase).addScaledVector(camDir, motion.dolly * 0.45);
   camera.position.y += st.camLift * 0.35;
   camera.position.x += Math.sin(elapsed * 0.55) * 0.008;
   camera.position.y += Math.sin(elapsed * 0.8) * 0.004;
@@ -709,13 +742,14 @@ function simulate(dt: number, opts: { render: boolean }): void {
   _lookEuler.set(look.pitch, look.yaw, 0);
   _fwd.applyEuler(_lookEuler);
   const target = _v.copy(camera.position).add(_fwd);
-  if (st.shake > 0.001) {
-    camera.position.x += (visualRandom() - 0.5) * st.shake;
-    camera.position.y += (visualRandom() - 0.5) * st.shake;
-    target.x += (visualRandom() - 0.5) * st.shake * 0.4;
-    target.y += (visualRandom() - 0.5) * st.shake * 0.4;
-    st.shake *= Math.exp(-dt * 5);
+  if (motion.shake > 0.001) {
+    camera.position.x += (visualRandom() - 0.5) * motion.shake;
+    camera.position.y += (visualRandom() - 0.5) * motion.shake;
+    target.x += (visualRandom() - 0.5) * motion.shake * 0.4;
+    target.y += (visualRandom() - 0.5) * motion.shake * 0.4;
   }
+  // Decay the source shake even when dampened so effect state advances.
+  if (st.shake > 0.001) st.shake *= Math.exp(-dt * 5);
   camera.lookAt(target);
 
   bloom.strength = BLOOM_BASE + st.bloomBoost;

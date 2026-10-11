@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { WinnerResult } from '../core';
+import type { Seat, WinnerResult } from '../core';
 import {
   orderWinnersForScenes,
   planWinScene,
@@ -15,6 +15,35 @@ const pinghuWinner: WinnerResult = {
   hand: [],
 };
 
+function deferredScheduler() {
+  const deferred: Array<{ fn: () => void; ms: number; id: number }> = [];
+  let nextId = 1;
+  const cancelled = new Set<number>();
+  const scheduler = new WinSceneScheduler({
+    now: () => 0,
+    defer: (fn, ms) => {
+      const id = nextId++;
+      deferred.push({ fn, ms, id });
+      return id;
+    },
+    cancelDefer: (h) => {
+      cancelled.add(h as number);
+    },
+    sceneDurationMs: 1000,
+  });
+  const flush = (predicate?: (item: { ms: number }) => boolean): void => {
+    const idx = deferred.findIndex((d) => !cancelled.has(d.id) && (predicate ? predicate(d) : true));
+    if (idx < 0) return;
+    const [item] = deferred.splice(idx, 1);
+    if (!item || cancelled.has(item.id)) return;
+    item.fn();
+  };
+  const flushAll = (): void => {
+    while (deferred.some((d) => !cancelled.has(d.id))) flush();
+  };
+  return { scheduler, deferred, flush, flushAll, cancelled };
+}
+
 describe('sceneTierForPatterns', () => {
   it('maps 平胡 to basic', () => {
     expect(sceneTierForPatterns(['pinghu'])).toBe('basic');
@@ -29,10 +58,8 @@ describe('sceneTierForPatterns', () => {
   });
 
   it('picks the highest matched pattern tier, not total fan', () => {
-    // 2 fan of big patterns stay big — fan count never promotes to top
     expect(sceneTierForPatterns(['qingyise', 'gangshangkaihua'])).toBe('big');
     expect(sceneTierForPatterns(['pengpenghu', 'qingyise'])).toBe('big');
-    // A top pattern still wins over stacked big fans
     expect(sceneTierForPatterns(['qingyise', 'pengpenghu', 'shisanyao'])).toBe('top');
   });
 });
@@ -65,7 +92,6 @@ describe('orderWinnersForScenes', () => {
       { seat: 3, patterns: ['shisanyao'], fan: 1, hand: [] },
       { seat: 1, patterns: ['qingyise'], fan: 1, hand: [] },
     ];
-    // Discarder 0 → seat order after: 1, 2, 3. Tiers: 3 top, 1+2 big (1 before 2), 0 basic.
     expect(orderWinnersForScenes(winners, 0).map((w) => w.seat)).toEqual([3, 1, 2, 0]);
   });
 });
@@ -74,13 +100,14 @@ describe('WinSceneScheduler', () => {
   it('maps 平胡 to basic and enters scheduling within 100 ms', () => {
     let clock = 0;
     const deferred: Array<{ fn: () => void; ms: number }> = [];
-    const played: unknown[] = [];
+    const queued: unknown[] = [];
 
     const scheduler = new WinSceneScheduler({
       now: () => clock,
       defer: (fn, ms) => deferred.push({ fn, ms }),
+      sceneDurationMs: 1000,
     });
-    scheduler.onPlay((plans) => played.push(plans));
+    scheduler.onPlay((plans) => queued.push(plans));
 
     const requestAt = clock;
     scheduler.scheduleWinners([pinghuWinner], 1);
@@ -88,23 +115,20 @@ describe('WinSceneScheduler', () => {
     expect((scheduler.getLastScheduledAt() ?? 0) - requestAt).toBeLessThan(100);
 
     clock += 16;
-    expect(deferred).toHaveLength(1);
     expect(deferred[0]!.ms).toBeLessThan(100);
     deferred[0]!.fn();
 
-    expect(played).toEqual([
+    expect(queued).toEqual([
       [expect.objectContaining({ tier: 'basic', patterns: ['pinghu'], fan: 1 })],
     ]);
   });
 
   it('schedules multi-win scenes in presentation order', () => {
-    const deferred: Array<() => void> = [];
-    const played: WinScenePlan[][] = [];
-    const scheduler = new WinSceneScheduler({
-      now: () => 0,
-      defer: (fn) => deferred.push(fn),
-    });
-    scheduler.onPlay((plans) => played.push(plans));
+    const { scheduler, flush } = deferredScheduler();
+    const queued: WinScenePlan[][] = [];
+    const scenes: Seat[] = [];
+    scheduler.onPlay((plans) => queued.push(plans));
+    scheduler.onScene((plan) => scenes.push(plan.seat));
 
     scheduler.scheduleWinners(
       [
@@ -114,28 +138,93 @@ describe('WinSceneScheduler', () => {
       ],
       1,
     );
-    deferred.shift()?.();
+    flush((d) => d.ms === 0);
 
-    // Discarder 1 → after: 2,3,0. Order: top(3), big(2), basic(0).
-    expect(played[0]!.map((p) => p.seat)).toEqual([3, 2, 0]);
-    expect(played[0]!.map((p) => p.tier)).toEqual(['top', 'big', 'basic']);
+    expect(queued[0]!.map((p) => p.seat)).toEqual([3, 2, 0]);
+    expect(queued[0]!.map((p) => p.tier)).toEqual(['top', 'big', 'basic']);
+    expect(scenes).toEqual([3]);
   });
 
-  it('replays the last planned scene', () => {
-    const deferred: Array<() => void> = [];
-    const played: unknown[] = [];
-    const scheduler = new WinSceneScheduler({
-      now: () => 0,
-      defer: (fn) => deferred.push(fn),
+  it('plays scenes sequentially and skips the current one', () => {
+    const { scheduler, flush } = deferredScheduler();
+    const scenes: number[] = [];
+    let idle = 0;
+    scheduler.onScene((plan) => scenes.push(plan.seat));
+    scheduler.onIdle(() => {
+      idle += 1;
     });
-    scheduler.onPlay((plans) => played.push(plans));
 
-    scheduler.scheduleWinners([pinghuWinner], 1);
-    deferred.shift()?.();
+    scheduler.scheduleWinners(
+      [
+        { seat: 3, patterns: ['shisanyao'], fan: 1, hand: [] },
+        { seat: 2, patterns: ['qidui'], fan: 1, hand: [] },
+        { seat: 0, patterns: ['pinghu'], fan: 1, hand: [] },
+      ],
+      1,
+    );
+    flush((d) => d.ms === 0);
+    expect(scenes).toEqual([3]);
+    expect(scheduler.isPlaying()).toBe(true);
+
+    scheduler.skip();
+    expect(scenes).toEqual([3, 2]);
+    scheduler.skip();
+    expect(scenes).toEqual([3, 2, 0]);
+    scheduler.skip();
+    expect(scheduler.isPlaying()).toBe(false);
+    expect(idle).toBe(1);
+  });
+
+  it('auto-skips opponent scenes but keeps the player scene', () => {
+    const { scheduler, flush, deferred } = deferredScheduler();
+    const scenes: number[] = [];
+    scheduler.setAutoSkipOpponent(true);
+    scheduler.onScene((plan) => scenes.push(plan.seat));
+
+    scheduler.scheduleWinners(
+      [
+        { seat: 3, patterns: ['shisanyao'], fan: 1, hand: [] },
+        { seat: 0, patterns: ['pinghu'], fan: 1, hand: [] },
+      ],
+      1,
+    );
+    flush((d) => d.ms === 0); // begin queue → play seat 3
+    flush((d) => d.ms === 0); // auto-skip opponent
+    expect(scenes).toEqual([3, 0]);
+    // player scene uses full duration
+    expect(deferred.some((d) => d.ms === 1000)).toBe(true);
+  });
+
+  it('replays the last planned scenes and a single seat', () => {
+    const { scheduler, flush } = deferredScheduler();
+    const queued: unknown[] = [];
+    const scenes: number[] = [];
+    scheduler.onPlay((plans) => queued.push(plans));
+    scheduler.onScene((plan) => scenes.push(plan.seat));
+
+    scheduler.scheduleWinners(
+      [
+        { seat: 2, patterns: ['qidui'], fan: 1, hand: [] },
+        { seat: 0, patterns: ['pinghu'], fan: 1, hand: [] },
+      ],
+      1,
+    );
+    flush((d) => d.ms === 0);
+    scheduler.skip();
+    scheduler.skip();
+    expect(scheduler.isPlaying()).toBe(false);
+
     scheduler.replay();
-    deferred.shift()?.();
+    flush((d) => d.ms === 0);
+    expect(queued).toHaveLength(2);
+    expect(queued[1]).toEqual([
+      expect.objectContaining({ seat: 2, tier: 'big' }),
+      expect.objectContaining({ seat: 0, tier: 'basic' }),
+    ]);
 
-    expect(played).toHaveLength(2);
-    expect(played[1]).toEqual([expect.objectContaining({ tier: 'basic' })]);
+    scenes.length = 0;
+    scheduler.replaySeat(0);
+    flush((d) => d.ms === 0);
+    expect(scenes).toEqual([0]);
   });
 });

@@ -1,5 +1,26 @@
+import {
+  buildExternalAiDisclosure,
+  createEasyDecisionProvider,
+  createExternalDecisionProvider,
+  createSeatRoutedDecisionProvider,
+  defaultExternalAiConfig,
+  isAllowedProxyUrl,
+  loadExternalAiConfig,
+  loadProxyToken,
+  saveExternalAiConfig,
+  saveProxyToken,
+  type ExternalAiPersistedConfig,
+  type OpponentSource,
+} from '../ai';
+import {
+  AudioController,
+  playSynthesized,
+  sfxForDomainEvent,
+  sfxForSceneTier,
+} from '../audio';
 import { FULL_SET_SIZE, PLAYER_SEAT, totalTileCount, type Command, type Seat } from '../core';
 import { MatchSession } from '../game/match';
+import { isReducedMotionMode, ReducedMotionController } from '../motion';
 import { PersistStore, replayCommands, type ActiveSave, type LoggedCommand } from '../persist';
 import { probeFromRenderer } from '../particles/probe';
 import { QualityController } from '../quality/qualityController';
@@ -17,6 +38,8 @@ import { TableView } from './tableView';
 import { formatTileCodes } from './tileLabels';
 import { patternLabels, WinSceneScheduler, type WinScenePlan } from './winPresentation';
 
+const AUTO_SKIP_STORAGE_KEY = 'mahjong.scene.autoSkipOpponent';
+
 function mustEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
   if (!el) throw new Error(`missing #${id}`);
@@ -31,25 +54,37 @@ const SEAT_NAMES: Record<Seat, string> = {
   3: '上家',
 };
 
+function memoryStorage(): Storage {
+  const map = new Map<string, string>();
+  return {
+    get length() {
+      return map.size;
+    },
+    clear: () => map.clear(),
+    getItem: (k) => map.get(k) ?? null,
+    setItem: (k, v) => {
+      map.set(k, v);
+    },
+    removeItem: (k) => {
+      map.delete(k);
+    },
+    key: () => null,
+  };
+}
+
 function browserStorage(): Storage {
   try {
     return window.localStorage;
   } catch {
-    const map = new Map<string, string>();
-    return {
-      get length() {
-        return map.size;
-      },
-      clear: () => map.clear(),
-      getItem: (k) => map.get(k) ?? null,
-      setItem: (k, v) => {
-        map.set(k, v);
-      },
-      removeItem: (k) => {
-        map.delete(k);
-      },
-      key: () => null,
-    };
+    return memoryStorage();
+  }
+}
+
+function browserSessionStorage(): Storage {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return memoryStorage();
   }
 }
 
@@ -72,6 +107,24 @@ export function bootPlayApp(): void {
   const clearDataBtn = mustEl<HTMLButtonElement>('clear-data');
   const replayLogInput = mustEl<HTMLTextAreaElement>('replay-log-input');
   const devReplayBtn = mustEl<HTMLButtonElement>('dev-replay');
+  const openAiSettingsBtn = mustEl<HTMLButtonElement>('open-ai-settings');
+  const aiSettingsPanel = mustEl<HTMLElement>('ai-settings');
+  const aiSource1 = mustEl<HTMLSelectElement>('ai-source-1');
+  const aiSource2 = mustEl<HTMLSelectElement>('ai-source-2');
+  const aiSource3 = mustEl<HTMLSelectElement>('ai-source-3');
+  const aiProxyUrl = mustEl<HTMLInputElement>('ai-proxy-url');
+  const aiModel = mustEl<HTMLInputElement>('ai-model');
+  const aiProxyToken = mustEl<HTMLInputElement>('ai-proxy-token');
+  const aiSettingsError = mustEl<HTMLElement>('ai-settings-error');
+  const aiSettingsSave = mustEl<HTMLButtonElement>('ai-settings-save');
+  const aiSettingsCancel = mustEl<HTMLButtonElement>('ai-settings-cancel');
+  const aiDisclosure = mustEl<HTMLElement>('ai-disclosure');
+  const aiDisclosureIntro = mustEl<HTMLElement>('ai-disclosure-intro');
+  const aiDisclosureProxy = mustEl<HTMLElement>('ai-disclosure-proxy');
+  const aiDisclosureSent = mustEl<HTMLElement>('ai-disclosure-sent');
+  const aiDisclosureWithheld = mustEl<HTMLElement>('ai-disclosure-withheld');
+  const aiDisclosureConfirm = mustEl<HTMLButtonElement>('ai-disclosure-confirm');
+  const aiDisclosureCancel = mustEl<HTMLButtonElement>('ai-disclosure-cancel');
   const themeSelect = mustEl<HTMLSelectElement>('theme-select');
   const qualitySelect = mustEl<HTMLSelectElement>('quality-select');
   const themeNotice = mustEl<HTMLElement>('theme-notice');
@@ -96,18 +149,138 @@ export function bootPlayApp(): void {
   const banner = mustEl<HTMLElement>('banner');
   const bannerMain = mustEl<HTMLElement>('banner-main');
   const bannerSub = mustEl<HTMLElement>('banner-sub');
+  const masterVolumeInput = mustEl<HTMLInputElement>('master-volume');
+  const sfxVolumeInput = mustEl<HTMLInputElement>('sfx-volume');
+  const reducedMotionSelect = mustEl<HTMLSelectElement>('reduced-motion');
+  const autoSkipOpponentInput = mustEl<HTMLInputElement>('auto-skip-opponent');
+  const sceneBar = mustEl<HTMLElement>('scene-bar');
+  const skipSceneBtn = mustEl<HTMLButtonElement>('skip-scene');
 
   seedInput.value = String(DEFAULT_SEED);
 
   const match = new MatchSession();
   const session = match.hand;
   const table = new TableView(canvas);
-  const scenes = new WinSceneScheduler();
   const storage = browserStorage();
   const persist = new PersistStore();
   let cachedActiveSave: ActiveSave | null = null;
   let persistChain: Promise<void> = Promise.resolve();
   let incompatibleReason: string | null = null;
+  /** Developer replay must not write IndexedDB activeSave (AC2 continue). */
+  let persistPausedForDevReplay = false;
+  let persistDebounceTimer: number | null = null;
+  const scenes = new WinSceneScheduler({
+    now: () => performance.now(),
+    defer: (fn, ms) => window.setTimeout(fn, ms),
+    cancelDefer: (h) => window.clearTimeout(h as number),
+  });
+  const sessionStore = browserSessionStorage();
+  let aiConfig = loadExternalAiConfig(storage);
+  let proxyToken = loadProxyToken(sessionStore);
+  let pendingDisclosureSources: ExternalAiPersistedConfig['seatSources'] | null = null;
+
+  const allowHttpLocalhost = Boolean(import.meta.env.DEV);
+
+  const rebuildDecisionProvider = (): void => {
+    const anyExternal =
+      aiConfig.seatSources[1] === 'external' ||
+      aiConfig.seatSources[2] === 'external' ||
+      aiConfig.seatSources[3] === 'external';
+    const easy = createEasyDecisionProvider();
+    if (!anyExternal) {
+      session.setDecisionProvider(easy);
+      return;
+    }
+    const external = createExternalDecisionProvider({
+      proxyUrl: aiConfig.proxyUrl,
+      model: aiConfig.model,
+      proxyToken,
+      fallback: easy,
+    });
+    session.setDecisionProvider(
+      createSeatRoutedDecisionProvider({
+        seatSources: aiConfig.seatSources,
+        easy,
+        external,
+      }),
+    );
+  };
+  rebuildDecisionProvider();
+
+  const fillList = (el: HTMLElement, items: string[]): void => {
+    el.replaceChildren();
+    for (const text of items) {
+      const li = document.createElement('li');
+      li.textContent = text;
+      el.append(li);
+    }
+  };
+
+  const syncAiSettingsForm = (): void => {
+    aiSource1.value = aiConfig.seatSources[1];
+    aiSource2.value = aiConfig.seatSources[2];
+    aiSource3.value = aiConfig.seatSources[3];
+    aiProxyUrl.value = aiConfig.proxyUrl;
+    aiModel.value = aiConfig.model;
+    aiProxyToken.value = proxyToken;
+    aiSettingsError.hidden = true;
+    aiSettingsError.textContent = '';
+  };
+
+  const showAiDisclosure = (sources: ExternalAiPersistedConfig['seatSources']): void => {
+    const copy = buildExternalAiDisclosure(aiProxyUrl.value.trim() || aiConfig.proxyUrl);
+    aiDisclosureIntro.textContent = copy.intro;
+    aiDisclosureProxy.textContent = copy.proxyUrl;
+    fillList(aiDisclosureSent, copy.sentFields);
+    fillList(aiDisclosureWithheld, copy.withheldFields);
+    pendingDisclosureSources = sources;
+    aiDisclosure.hidden = false;
+  };
+
+  const readSourcesFromForm = (): ExternalAiPersistedConfig['seatSources'] => ({
+    1: (aiSource1.value === 'external' ? 'external' : 'easy') as OpponentSource,
+    2: (aiSource2.value === 'external' ? 'external' : 'easy') as OpponentSource,
+    3: (aiSource3.value === 'external' ? 'external' : 'easy') as OpponentSource,
+  });
+
+  const commitAiSettings = (sources: ExternalAiPersistedConfig['seatSources']): boolean => {
+    const next: ExternalAiPersistedConfig = {
+      ...defaultExternalAiConfig(),
+      proxyUrl: aiProxyUrl.value.trim(),
+      model: aiModel.value.trim(),
+      seatSources: sources,
+      disclosureAccepted: aiConfig.disclosureAccepted,
+    };
+    const wantsExternal =
+      sources[1] === 'external' || sources[2] === 'external' || sources[3] === 'external';
+    if (wantsExternal) {
+      if (!next.disclosureAccepted) {
+        showAiDisclosure(sources);
+        return false;
+      }
+      if (!isAllowedProxyUrl(next.proxyUrl, { allowHttpLocalhost })) {
+        aiSettingsError.hidden = false;
+        aiSettingsError.textContent = allowHttpLocalhost
+          ? '请填写 HTTPS 代理，或本机开发用的 http://localhost / http://127.0.0.1'
+          : '生产环境仅接受 HTTPS 代理地址';
+        return false;
+      }
+      if (!next.model) {
+        aiSettingsError.hidden = false;
+        aiSettingsError.textContent = '请填写模型名';
+        return false;
+      }
+    }
+    aiConfig = next;
+    proxyToken = aiProxyToken.value;
+    saveExternalAiConfig(storage, aiConfig);
+    saveProxyToken(sessionStore, proxyToken);
+    rebuildDecisionProvider();
+    aiSettingsPanel.hidden = true;
+    aiDisclosure.hidden = true;
+    pendingDisclosureSources = null;
+    return true;
+  };
   const themes = new ThemeManager({
     storage,
     now: () => performance.now(),
@@ -118,8 +291,14 @@ export function bootPlayApp(): void {
   });
   const quality = new QualityController({ storage });
   quality.restore();
+  const audio = new AudioController({ storage, play: playSynthesized });
+  audio.restore();
+  const reducedMotion = new ReducedMotionController({ storage });
+  reducedMotion.restore();
+  scenes.setAutoSkipOpponent(storage.getItem(AUTO_SKIP_STORAGE_KEY) === '1');
   const gpuProbe = probeFromRenderer(table.renderer);
   let lastHandWonEventCount = 0;
+  let lastEventCount = 0;
   let sceneReleaseTimer: number | null = null;
   let lastFrameAt = performance.now();
   let fpsEma = 60;
@@ -184,15 +363,35 @@ export function bootPlayApp(): void {
     syncThemeChrome();
   };
 
-  const showScene = (plans: WinScenePlan[]): void => {
-    const plan = plans[0];
-    if (!plan) return;
+  const syncAudioChrome = (): void => {
+    masterVolumeInput.value = String(audio.getMasterVolume());
+    sfxVolumeInput.value = String(audio.getSfxVolume());
+  };
+
+  const syncMotionChrome = (): void => {
+    reducedMotionSelect.value = reducedMotion.getMode();
+    document.body.dataset.reducedMotion = reducedMotion.isEnabled() ? 'on' : 'off';
+    autoSkipOpponentInput.checked = scenes.getAutoSkipOpponent();
+  };
+
+  const setSceneChrome = (playing: boolean): void => {
+    document.body.classList.toggle('scene-playing', playing);
+    sceneBar.hidden = !playing;
+    if (playing) {
+      winPanel.hidden = true;
+      responseBar.hidden = true;
+      selfBar.hidden = true;
+    }
+  };
+
+  const showScene = (plan: WinScenePlan): void => {
     const palette = themes.captureScenePalette();
     document.documentElement.style.setProperty('--banner-basic', palette.bannerBasic);
     bannerMain.textContent = plan.bannerMain;
     bannerSub.textContent = plan.bannerSub;
     banner.className = `show ${plan.tier}`;
     banner.style.setProperty('--delay', '0s');
+    audio.play(sfxForSceneTier(plan.tier));
     if (sceneReleaseTimer !== null) window.clearTimeout(sceneReleaseTimer);
     sceneReleaseTimer = window.setTimeout(() => {
       themes.releaseScenePalette();
@@ -202,7 +401,17 @@ export function bootPlayApp(): void {
     }, 2400);
   };
 
-  scenes.onPlay(showScene);
+  scenes.onPlay(() => {
+    setSceneChrome(true);
+  });
+  scenes.onScene((plan) => {
+    setSceneChrome(true);
+    showScene(plan);
+  });
+  scenes.onIdle(() => {
+    setSceneChrome(false);
+    refresh();
+  });
 
   const showMenu = (): void => {
     document.body.classList.add('menu');
@@ -273,7 +482,9 @@ export function bootPlayApp(): void {
       btn.type = 'button';
       btn.dataset.testid = 'claim-chow';
       btn.textContent = `吃 ${formatTileCodes(option.codes)}`;
-      btn.addEventListener('click', () => session.claimChow(option.tileIds));
+      btn.addEventListener('click', () => {
+        void session.claimChow(option.tileIds);
+      });
       chowOptionsEl.append(btn);
     }
   };
@@ -287,7 +498,9 @@ export function bootPlayApp(): void {
       btn.type = 'button';
       btn.dataset.testid = 'declare-concealed-kong';
       btn.textContent = `暗杠 ${formatTileCodes([code])}`;
-      btn.addEventListener('click', () => session.declareConcealedKong(code));
+      btn.addEventListener('click', () => {
+        void session.declareConcealedKong(code);
+      });
       kongOptionsEl.append(btn);
     }
     for (const code of snap.playerAddedKongCodes) {
@@ -295,14 +508,16 @@ export function bootPlayApp(): void {
       btn.type = 'button';
       btn.dataset.testid = 'declare-added-kong';
       btn.textContent = `加杠 ${formatTileCodes([code])}`;
-      btn.addEventListener('click', () => session.declareAddedKong(code));
+      btn.addEventListener('click', () => {
+        void session.declareAddedKong(code);
+      });
       kongOptionsEl.append(btn);
     }
   };
 
   const renderWinPanel = (): void => {
     const snap = session.snapshot();
-    if (snap.status !== 'hand_won' || !snap.winSettlement) {
+    if (snap.status !== 'hand_won' || !snap.winSettlement || scenes.isPlaying()) {
       winPanel.hidden = true;
       winSummary.replaceChildren();
       return;
@@ -320,8 +535,27 @@ export function bootPlayApp(): void {
         `<div class="win-patterns">${labels}</div>`,
         `<div class="win-hand">手牌 ${formatTileCodes(winner.hand.map((t) => t.code))}</div>`,
       ].join('');
+      const actions = document.createElement('div');
+      actions.className = 'win-seat-actions';
+      const replayOne = document.createElement('button');
+      replayOne.type = 'button';
+      replayOne.dataset.testid = `replay-seat-${winner.seat}`;
+      replayOne.textContent = '单独重播';
+      replayOne.addEventListener('click', () => scenes.replaySeat(winner.seat));
+      actions.append(replayOne);
+      row.append(actions);
       winSummary.append(row);
     }
+  };
+
+  const playNewEventSfx = (): void => {
+    const events = session.snapshot().events;
+    if (events.length < lastEventCount) lastEventCount = 0;
+    for (let i = lastEventCount; i < events.length; i++) {
+      const id = sfxForDomainEvent(events[i]!);
+      if (id) audio.play(id);
+    }
+    lastEventCount = events.length;
   };
 
   const maybeScheduleWinScene = (): void => {
@@ -338,6 +572,7 @@ export function bootPlayApp(): void {
     const matchSnap = match.snapshot();
     const snap = matchSnap.hand;
     table.sync(snap.state, snap.selectedTileId);
+    playNewEventSfx();
     maybeScheduleWinScene();
 
     if (matchSnap.status === 'menu' || !snap.state) {
@@ -359,22 +594,27 @@ export function bootPlayApp(): void {
       `实体牌 ${totalTileCount(snap.state)}/${FULL_SET_SIZE}`,
     ].join(' · ');
 
+    const scenePlaying = scenes.isPlaying();
+    setSceneChrome(scenePlaying);
+
     const responding =
-      snap.status === 'awaiting_player_win_response' ||
-      snap.status === 'awaiting_player_claim_response';
+      !scenePlaying &&
+      (snap.status === 'awaiting_player_win_response' ||
+        snap.status === 'awaiting_player_claim_response');
     responseBar.hidden = !responding;
     claimWinBtn.hidden = responding ? !snap.playerCanWin : true;
-    claimKongBtn.hidden = snap.status !== 'awaiting_player_claim_response' || !snap.playerCanKong;
-    claimPungBtn.hidden = snap.status !== 'awaiting_player_claim_response' || !snap.playerCanPung;
+    claimKongBtn.hidden = snap.status !== 'awaiting_player_claim_response' || !snap.playerCanKong || scenePlaying;
+    claimPungBtn.hidden = snap.status !== 'awaiting_player_claim_response' || !snap.playerCanPung || scenePlaying;
     renderChowOptions();
 
     const selfActions =
+      !scenePlaying &&
       snap.status === 'awaiting_player_discard' &&
       (snap.playerCanWin ||
         snap.playerConcealedKongCodes.length > 0 ||
         snap.playerAddedKongCodes.length > 0);
     selfBar.hidden = !selfActions;
-    declareWinBtn.hidden = !snap.playerCanWin || snap.status !== 'awaiting_player_discard';
+    declareWinBtn.hidden = !snap.playerCanWin || snap.status !== 'awaiting_player_discard' || scenePlaying;
     renderKongOptions();
 
     if (snap.status === 'awaiting_player_discard') {
@@ -385,6 +625,8 @@ export function bootPlayApp(): void {
       statusEl.textContent = '可响应：选择胡 / 杠 / 碰 / 吃 / 过（无倒计时）';
     } else if (snap.status === 'awaiting_player_win_response') {
       statusEl.textContent = snap.playerCanWin ? '可胡或过' : '请选择过';
+    } else if (snap.status === 'awaiting_ai') {
+      statusEl.textContent = '对手思考中…';
     } else if (snap.status === 'exhaustive_draw') {
       statusEl.textContent = '流局 · 不计番 · 庄家不变';
     } else if (snap.status === 'hand_won') {
@@ -410,9 +652,15 @@ export function bootPlayApp(): void {
     }
   };
 
-  const queuePersist = (): void => {
+  const flushPersist = (): void => {
+    if (persistDebounceTimer !== null) {
+      window.clearTimeout(persistDebounceTimer);
+      persistDebounceTimer = null;
+    }
+    if (persistPausedForDevReplay) return;
     persistChain = persistChain
       .then(async () => {
+        if (persistPausedForDevReplay) return;
         const save = match.toActiveSave();
         if (!save) return;
         cachedActiveSave = await persist.saveActive(save);
@@ -420,6 +668,21 @@ export function bootPlayApp(): void {
       .catch((err) => {
         console.error('persist save failed', err);
       });
+  };
+
+  /** Debounce IndexedDB writes so rapid autoplay does not serialize hundreds of puts. */
+  const queuePersist = (): void => {
+    if (persistPausedForDevReplay) return;
+    if (persistDebounceTimer !== null) window.clearTimeout(persistDebounceTimer);
+    persistDebounceTimer = window.setTimeout(() => {
+      persistDebounceTimer = null;
+      flushPersist();
+    }, 40);
+  };
+
+  const waitPersistIdle = async (): Promise<void> => {
+    flushPersist();
+    await persistChain;
   };
 
   const downloadText = (filename: string, text: string): void => {
@@ -469,8 +732,10 @@ export function bootPlayApp(): void {
     })();
   });
 
-  const startNewMatch = (seed: number): void => {
+  const startNewMatch = async (seed: number): Promise<void> => {
     lastHandWonEventCount = 0;
+    lastEventCount = 0;
+    persistPausedForDevReplay = false;
     quality.endGame();
     if (quality.getMode() === 'auto') {
       quality.selectInitial(gpuProbe, fpsEma);
@@ -478,15 +743,18 @@ export function bootPlayApp(): void {
       syncQualityChrome();
     }
     quality.beginGame();
+    rebuildDecisionProvider();
     cachedActiveSave = null;
     incompatibleReason = null;
     syncMenuPersistUi();
-    match.startMatch(seed);
+    await match.startMatch(seed);
   };
 
   const continueMatch = (): void => {
     if (!cachedActiveSave) return;
     lastHandWonEventCount = 0;
+    lastEventCount = 0;
+    persistPausedForDevReplay = false;
     quality.endGame();
     if (quality.getMode() === 'auto') {
       quality.selectInitial(gpuProbe, fpsEma);
@@ -494,9 +762,9 @@ export function bootPlayApp(): void {
       syncQualityChrome();
     }
     quality.beginGame();
+    rebuildDecisionProvider();
     match.restoreFromSave(cachedActiveSave);
-    const seed = cachedActiveSave.handState.seed;
-    seedInput.value = String(seed);
+    seedInput.value = String(cachedActiveSave.handState.seed);
   };
 
   const onStartMatchClick = (): void => {
@@ -506,29 +774,79 @@ export function bootPlayApp(): void {
       statusEl.textContent = '请输入有效数字种子';
       return;
     }
-    startNewMatch(seed);
+    void startNewMatch(seed);
   };
 
   startMatchBtn.addEventListener('click', onStartMatchClick);
   startBtn.addEventListener('click', onStartMatchClick);
   continueMatchBtn.addEventListener('click', () => continueMatch());
 
-  claimWinBtn.addEventListener('click', () => session.claimWin());
-  claimKongBtn.addEventListener('click', () => session.claimKong());
-  claimPungBtn.addEventListener('click', () => session.claimPung());
-  declareWinBtn.addEventListener('click', () => session.claimWin());
-  passBtn.addEventListener('click', () => session.passResponse());
-  const goNextHand = (): void => {
+  openAiSettingsBtn.addEventListener('click', () => {
+    syncAiSettingsForm();
+    aiSettingsPanel.hidden = false;
+  });
+  aiSettingsCancel.addEventListener('click', () => {
+    aiSettingsPanel.hidden = true;
+    aiDisclosure.hidden = true;
+    pendingDisclosureSources = null;
+  });
+  aiSettingsSave.addEventListener('click', () => {
+    commitAiSettings(readSourcesFromForm());
+  });
+  aiDisclosureCancel.addEventListener('click', () => {
+    aiDisclosure.hidden = true;
+    pendingDisclosureSources = null;
+    // Revert external selections until confirmed.
+    syncAiSettingsForm();
+  });
+  aiDisclosureConfirm.addEventListener('click', () => {
+    if (!pendingDisclosureSources) return;
+    aiConfig = { ...aiConfig, disclosureAccepted: true };
+    commitAiSettings(pendingDisclosureSources);
+  });
+
+  claimWinBtn.addEventListener('click', () => {
+    void session.claimWin();
+  });
+  claimKongBtn.addEventListener('click', () => {
+    void session.claimKong();
+  });
+  claimPungBtn.addEventListener('click', () => {
+    void session.claimPung();
+  });
+  declareWinBtn.addEventListener('click', () => {
+    void session.claimWin();
+  });
+  passBtn.addEventListener('click', () => {
+    void session.passResponse();
+  });
+  const goNextHand = async (): Promise<void> => {
     lastHandWonEventCount = 0;
-    match.nextHand();
+    lastEventCount = 0;
+    await match.nextHand();
     const nextSeed = session.snapshot().seed;
     if (nextSeed !== null) seedInput.value = String(nextSeed);
   };
-  nextHandBtn.addEventListener('click', goNextHand);
-  winNextHandBtn.addEventListener('click', goNextHand);
+  nextHandBtn.addEventListener('click', () => {
+    void goNextHand();
+  });
+  winNextHandBtn.addEventListener('click', () => {
+    void goNextHand();
+  });
   const endCurrentMatch = (): void => {
     lastHandWonEventCount = 0;
+    lastEventCount = 0;
     quality.endGame();
+
+    if (persistPausedForDevReplay) {
+      // Leave IndexedDB activeSave untouched; reload continue target from store.
+      persistPausedForDevReplay = false;
+      match.endMatch();
+      table.sync(null, null);
+      void refreshPersistMenu();
+      return;
+    }
+
     const meta = match.archiveMeta();
     cachedActiveSave = null;
     incompatibleReason = null;
@@ -551,7 +869,8 @@ export function bootPlayApp(): void {
   };
   endMatchDrawBtn.addEventListener('click', endCurrentMatch);
   endMatchWinBtn.addEventListener('click', endCurrentMatch);
-  replaySceneBtn.addEventListener('click', () => scenes.replay());
+  replaySceneBtn.addEventListener('click', () => scenes.replayAll());
+  skipSceneBtn.addEventListener('click', () => scenes.skip());
 
   exportDataBtn.addEventListener('click', () => {
     void persist.exportJson().then((json) => {
@@ -580,6 +899,7 @@ export function bootPlayApp(): void {
       storage.removeItem(QUALITY_MODE_STORAGE_KEY);
       cachedActiveSave = null;
       incompatibleReason = null;
+      persistPausedForDevReplay = false;
       syncMenuPersistUi();
       await themes.select('classic-green');
       applyActiveTheme();
@@ -591,8 +911,11 @@ export function bootPlayApp(): void {
   });
 
   const runDevReplay = (commands: LoggedCommand[]): void => {
+    // Pause before restore so subscribe → queuePersist cannot clobber activeSave.
+    persistPausedForDevReplay = true;
     const result = replayCommands(commands);
     lastHandWonEventCount = 0;
+    lastEventCount = 0;
     quality.endGame();
     quality.beginGame();
     const status =
@@ -636,10 +959,31 @@ export function bootPlayApp(): void {
     }
   });
 
+  masterVolumeInput.addEventListener('input', () => {
+    audio.setMasterVolume(Number.parseFloat(masterVolumeInput.value));
+  });
+  sfxVolumeInput.addEventListener('input', () => {
+    audio.setSfxVolume(Number.parseFloat(sfxVolumeInput.value));
+  });
+  reducedMotionSelect.addEventListener('change', () => {
+    const value = reducedMotionSelect.value;
+    if (!isReducedMotionMode(value)) {
+      reducedMotionSelect.value = reducedMotion.getMode();
+      return;
+    }
+    reducedMotion.setMode(value);
+    syncMotionChrome();
+  });
+  autoSkipOpponentInput.addEventListener('change', () => {
+    scenes.setAutoSkipOpponent(autoSkipOpponentInput.checked);
+    storage.setItem(AUTO_SKIP_STORAGE_KEY, autoSkipOpponentInput.checked ? '1' : '0');
+  });
+
   let pointerDownAt: { x: number; y: number; tileId: string } | null = null;
   let dragging = false;
 
   canvas.addEventListener('pointerdown', (e) => {
+    if (scenes.isPlaying()) return;
     if (session.snapshot().status !== 'awaiting_player_discard') return;
     const tileId = table.pickPlayerTile(e.clientX, e.clientY);
     if (!tileId) return;
@@ -664,10 +1008,10 @@ export function bootPlayApp(): void {
     if (!pointerDownAt) return;
     if (dragging) {
       const result = table.endDrag(e.clientX, e.clientY);
-      if (result?.intoRiver) session.discardByDrag(result.tileId);
+      if (result?.intoRiver) void session.discardByDrag(result.tileId);
       else refresh();
     } else {
-      session.clickTile(pointerDownAt.tileId);
+      void session.clickTile(pointerDownAt.tileId);
     }
     pointerDownAt = null;
     dragging = false;
@@ -715,12 +1059,8 @@ export function bootPlayApp(): void {
 
   window.__play = {
     ready: false,
-    start: (seed: number) => {
-      startNewMatch(seed);
-    },
-    startMatch: (seed: number) => {
-      startNewMatch(seed);
-    },
+    start: (seed: number) => startNewMatch(seed),
+    startMatch: (seed: number) => startNewMatch(seed),
     continueMatch: () => {
       continueMatch();
     },
@@ -738,6 +1078,7 @@ export function bootPlayApp(): void {
       storage.removeItem(QUALITY_MODE_STORAGE_KEY);
       cachedActiveSave = null;
       incompatibleReason = null;
+      persistPausedForDevReplay = false;
       syncMenuPersistUi();
     },
     refreshPersistMenu: () => refreshPersistMenu(),
@@ -746,7 +1087,7 @@ export function bootPlayApp(): void {
     replayActionLog: (commands: Command[]) => {
       runDevReplay(commands);
     },
-    waitPersist: () => persistChain,
+    waitPersist: () => waitPersistIdle(),
     clickTile: (tileId: string) => session.clickTile(tileId),
     discardByDrag: (tileId: string) => session.discardByDrag(tileId),
     autoPlayToDraw: () => session.autoPlayPlayerFirstLegal(),
@@ -755,20 +1096,45 @@ export function bootPlayApp(): void {
     claimChow: (tileIds: [string, string]) => session.claimChow(tileIds),
     passWin: () => session.passResponse(),
     passResponse: () => session.passResponse(),
-    startNextHand: (_seed?: number) => {
-      goNextHand();
-    },
-    loadPinghuWinDemo: () => {
+    startNextHand: (_seed?: number) => goNextHand(),
+    loadPinghuWinDemo: async () => {
       lastHandWonEventCount = 0;
+      lastEventCount = 0;
+      persistPausedForDevReplay = false;
       if (match.snapshot().status === 'menu') {
-        startNewMatch(DEFAULT_SEED);
+        await startNewMatch(DEFAULT_SEED);
       }
       session.loadPinghuWinDemo();
       // Demo settles as an in-match hand for settlement / end UI.
       refresh();
     },
-    replayScene: () => scenes.replay(),
+    replayScene: () => scenes.replayAll(),
+    replaySeat: (seat: Seat) => scenes.replaySeat(seat),
+    skipScene: () => scenes.skip(),
+    isScenePlaying: () => scenes.isPlaying(),
     lastScenePlans: () => scenes.getLastPlans(),
+    setMasterVolume: (v: number) => {
+      audio.setMasterVolume(v);
+      syncAudioChrome();
+    },
+    setSfxVolume: (v: number) => {
+      audio.setSfxVolume(v);
+      syncAudioChrome();
+    },
+    masterVolume: () => audio.getMasterVolume(),
+    sfxVolume: () => audio.getSfxVolume(),
+    setReducedMotion: (mode: 'system' | 'on' | 'off') => {
+      reducedMotion.setMode(mode);
+      syncMotionChrome();
+    },
+    reducedMotionMode: () => reducedMotion.getMode(),
+    reducedMotionEnabled: () => reducedMotion.isEnabled(),
+    setAutoSkipOpponent: (enabled: boolean) => {
+      scenes.setAutoSkipOpponent(enabled);
+      storage.setItem(AUTO_SKIP_STORAGE_KEY, enabled ? '1' : '0');
+      syncMotionChrome();
+    },
+    autoSkipOpponent: () => scenes.getAutoSkipOpponent(),
     selectTheme: async (id: ThemeId) => {
       const from = themes.getApplied();
       const result = await themes.select(id);
@@ -829,6 +1195,8 @@ export function bootPlayApp(): void {
     }
     applyQualityToTable();
     syncQualityChrome();
+    syncAudioChrome();
+    syncMotionChrome();
     await refreshPersistMenu();
     showMenu();
     document.body.classList.add('ready');

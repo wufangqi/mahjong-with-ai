@@ -37,6 +37,15 @@ export interface SeatVisibleState {
   discarder: Seat | null;
 }
 
+export interface DecisionChooseOptions {
+  /** Shared deadline for parallel multi-seat claim windows. */
+  signal?: AbortSignal;
+}
+
 export interface DecisionProvider {
-  choose(view: SeatVisibleState, legalActions: readonly DecisionAction[]): DecisionAction;
+  choose(
+    view: SeatVisibleState,
+    legalActions: readonly DecisionAction[],
+    opts?: DecisionChooseOptions,
+  ): Promise<DecisionAction>;
 }

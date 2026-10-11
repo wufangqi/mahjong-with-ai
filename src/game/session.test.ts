@@ -3,9 +3,9 @@ import { FULL_SET_SIZE, PLAYER_SEAT, totalTileCount } from '../core';
 import { PlaySession } from './session';
 
 describe('PlaySession', () => {
-  it('advances to the player discard turn for a fixed seed', () => {
+  it('advances to the player discard turn for a fixed seed', async () => {
     const session = new PlaySession();
-    session.start(42);
+    await session.start(42);
     const snap = session.snapshot();
     expect(snap.status).toBe('awaiting_player_discard');
     expect(snap.state?.turn).toBe(PLAYER_SEAT);
@@ -13,20 +13,20 @@ describe('PlaySession', () => {
     expect(totalTileCount(snap.state!)).toBe(FULL_SET_SIZE);
   });
 
-  it('requires a second click to confirm discard and then continues the round', () => {
+  it('requires a second click to confirm discard and then continues the round', async () => {
     const session = new PlaySession();
-    session.start(42);
+    await session.start(42);
     for (let i = 0; i < 8 && session.snapshot().status === 'awaiting_player_claim_response'; i++) {
-      session.passResponse();
+      await session.passResponse();
     }
     expect(session.snapshot().status).toBe('awaiting_player_discard');
     const drawnId = session.snapshot().state!.seats[PLAYER_SEAT].drawn!.id;
 
-    session.clickTile(drawnId);
+    await session.clickTile(drawnId);
     expect(session.snapshot().selectedTileId).toBe(drawnId);
     expect(session.snapshot().status).toBe('awaiting_player_discard');
 
-    session.clickTile(drawnId);
+    await session.clickTile(drawnId);
     const after = session.snapshot();
     expect(after.state?.seats[PLAYER_SEAT].river.at(-1)?.id).toBe(drawnId);
     expect(totalTileCount(after.state!)).toBe(FULL_SET_SIZE);
@@ -35,25 +35,26 @@ describe('PlaySession', () => {
       'awaiting_player_discard',
       'awaiting_player_claim_response',
       'awaiting_player_win_response',
+      'awaiting_ai',
       'exhaustive_draw',
       'hand_won',
     ]).toContain(after.status);
   });
 
-  it('accepts drag discard without a prior selection', () => {
+  it('accepts drag discard without a prior selection', async () => {
     const session = new PlaySession();
-    session.start(11);
+    await session.start(11);
     const tileId = session.snapshot().state!.seats[PLAYER_SEAT].hand[0]!.id;
-    session.discardByDrag(tileId);
+    await session.discardByDrag(tileId);
     const snap = session.snapshot();
     expect(snap.state?.seats[PLAYER_SEAT].river.at(-1)?.id).toBe(tileId);
     expect(totalTileCount(snap.state!)).toBe(FULL_SET_SIZE);
   });
 
-  it('plays a full no-response hand to 流局 with first-legal actions', () => {
+  it('plays a full no-response hand to 流局 with first-legal actions', async () => {
     const session = new PlaySession();
-    session.start(42);
-    session.autoPlayPlayerFirstLegal();
+    await session.start(42);
+    await session.autoPlayPlayerFirstLegal();
     const snap = session.snapshot();
     expect(snap.status).toBe('exhaustive_draw');
     expect(snap.state?.phase).toBe('exhaustive_draw');
@@ -68,36 +69,36 @@ describe('PlaySession', () => {
     }
   });
 
-  it('keeps the dealer when starting the next hand after 流局', () => {
+  it('keeps the dealer when starting the next hand after 流局', async () => {
     const session = new PlaySession();
-    session.start(42);
-    session.autoPlayPlayerFirstLegal();
+    await session.start(42);
+    await session.autoPlayPlayerFirstLegal();
     const dealer = session.snapshot().state!.dealer;
-    session.startNextHand(1001);
+    await session.startNextHand(1001);
     expect(session.snapshot().state!.dealer).toBe(dealer);
     expect(session.snapshot().status).toBe('awaiting_player_discard');
   });
 
-  it('is reproducible for a fixed seed through 流局', () => {
+  it('is reproducible for a fixed seed through 流局', async () => {
     const a = new PlaySession();
-    a.start(99);
-    a.autoPlayPlayerFirstLegal();
+    await a.start(99);
+    await a.autoPlayPlayerFirstLegal();
     const b = new PlaySession();
-    b.start(99);
-    b.autoPlayPlayerFirstLegal();
+    await b.start(99);
+    await b.autoPlayPlayerFirstLegal();
     expect(a.snapshot().settlement).toEqual(b.snapshot().settlement);
     expect(a.snapshot().state!.seats.map((s) => s.river.map((t) => t.id))).toEqual(
       b.snapshot().state!.seats.map((s) => s.river.map((t) => t.id)),
     );
   });
 
-  it('loads a 平胡 response demo, claims win, and settles with 1 fan', () => {
+  it('loads a 平胡 response demo, claims win, and settles with 1 fan', async () => {
     const session = new PlaySession();
     session.loadPinghuWinDemo();
     expect(session.snapshot().status).toBe('awaiting_player_win_response');
     expect(session.snapshot().playerCanWin).toBe(true);
 
-    session.claimWin();
+    await session.claimWin();
     const snap = session.snapshot();
     expect(snap.status).toBe('hand_won');
     expect(snap.winSettlement?.winners).toEqual([
@@ -106,14 +107,14 @@ describe('PlaySession', () => {
     expect(snap.events.some((e) => e.type === 'HandWon')).toBe(true);
 
     const winnerSeat = snap.winSettlement!.winners[0]!.seat;
-    session.startNextHand(5302);
+    await session.startNextHand(5302);
     expect(session.snapshot().state!.dealer).toBe(winnerSeat);
   });
 
-  it('lets the player pass a 平胡 opportunity without claiming that win', () => {
+  it('lets the player pass a 平胡 opportunity without claiming that win', async () => {
     const session = new PlaySession();
     session.loadPinghuWinDemo();
-    session.passWin();
+    await session.passWin();
     const snap = session.snapshot();
     // Pass abandons only the player's current chance; continued autoplay may
     // still end the hand if an opponent later claims 胡.
@@ -122,6 +123,7 @@ describe('PlaySession', () => {
       'awaiting_player_discard',
       'awaiting_player_win_response',
       'awaiting_player_claim_response',
+      'awaiting_ai',
       'exhaustive_draw',
       'hand_won',
     ]).toContain(snap.status);
