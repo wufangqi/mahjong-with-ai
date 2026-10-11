@@ -57,36 +57,37 @@ function winResponseState(): HandState {
 }
 
 describe('easy DecisionProvider', () => {
-  it('always claims win when win is legal', () => {
+  it('always claims win when win is legal', async () => {
     const state = winResponseState();
     expect(canWinOnDiscard(state, 1, 'm1')).toBe(true);
     const easy = createEasyDecisionProvider();
     const view = buildSeatView(state, 1);
     const legal = listLegalActions(state, 1);
-    const choice = easy.choose(view, legal);
+    const choice = await easy.choose(view, legal);
     expect(choice).toEqual({ type: 'ClaimWin' });
   });
 
-  it('always picks a legal action and prefers discard of drawn tile', () => {
+  it('always picks a legal action and prefers discard of drawn tile', async () => {
     const { state } = applyCommand(null, { type: 'StartHand', seed: 11, dealer: 2 as Seat });
     const drawn = state.seats[2].drawn;
     expect(drawn).not.toBeNull();
     const easy = createEasyDecisionProvider();
     const view = buildSeatView(state, 2);
     const legal = listLegalActions(state, 2);
-    const choice = easy.choose(view, legal);
+    const choice = await easy.choose(view, legal);
     expect(legal).toContainEqual(choice);
     expect(choice).toEqual({ type: 'Discard', tileId: drawn!.id });
   });
 
-  it('never returns an action outside the legal list', () => {
+  it('never returns an action outside the legal list', async () => {
     const { state } = applyCommand(null, { type: 'StartHand', seed: 99 });
     const easy = createEasyDecisionProvider();
     for (const seat of [1, 2, 3] as Seat[]) {
       if (state.turn !== seat || state.phase !== 'awaiting_discard') continue;
       const legal = listLegalActions(state, seat);
-      const choice = easy.choose(buildSeatView(state, seat), legal);
+      const choice = await easy.choose(buildSeatView(state, seat), legal);
       expect(legal).toContainEqual(choice);
     }
   });
 });
+

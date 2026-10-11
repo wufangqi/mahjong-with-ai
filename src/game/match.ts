@@ -60,16 +60,16 @@ export class MatchSession {
   }
 
   /** Start a new match from the main menu. First dealer is random from `seed`. */
-  startMatch(seed: number): void {
+  async startMatch(seed: number): Promise<void> {
     this.matchSeed = seed >>> 0;
     this.handIndex = 1;
     this.status = 'in_hand';
-    this.hand.start(seed);
+    await this.hand.start(seed);
     this.emit();
   }
 
   /** After settlement: deal the next hand with dealer continuity rules. */
-  nextHand(): void {
+  async nextHand(): Promise<void> {
     if (this.status !== 'hand_settled') {
       throw new Error('next hand is only available after settlement');
     }
@@ -77,7 +77,7 @@ export class MatchSession {
     const nextSeed = (prevSeed + 1) >>> 0;
     this.handIndex += 1;
     this.status = 'in_hand';
-    this.hand.startNextHand(nextSeed);
+    await this.hand.startNextHand(nextSeed);
     this.emit();
   }
 

@@ -15,11 +15,11 @@ describe('MatchSession', () => {
     expect(snap).not.toHaveProperty('chips');
   });
 
-  it('starts a match from the menu with random first dealer reproducible by seed', () => {
+  it('starts a match from the menu with random first dealer reproducible by seed', async () => {
     const a = new MatchSession();
     const b = new MatchSession();
-    a.startMatch(42);
-    b.startMatch(42);
+    await a.startMatch(42);
+    await b.startMatch(42);
 
     const expectedDealer = applyCommand(null, { type: 'StartHand', seed: 42 }).state.dealer;
     expect(a.snapshot().status).toBe('in_hand');
@@ -32,20 +32,20 @@ describe('MatchSession', () => {
     );
   });
 
-  it('keeps the dealer after 流局 next hand and returns to menu on end', () => {
+  it('keeps the dealer after 流局 next hand and returns to menu on end', async () => {
     const match = new MatchSession();
-    match.startMatch(42);
-    match.hand.autoPlayPlayerFirstLegal();
+    await match.startMatch(42);
+    await match.hand.autoPlayPlayerFirstLegal();
     expect(match.snapshot().status).toBe('hand_settled');
     expect(match.snapshot().hand.status).toBe('exhaustive_draw');
 
     const dealer = match.snapshot().hand.state!.dealer;
-    match.nextHand();
+    await match.nextHand();
     expect(match.snapshot().status).toBe('in_hand');
     expect(match.snapshot().handIndex).toBe(2);
     expect(match.snapshot().hand.state!.dealer).toBe(dealer);
 
-    match.hand.autoPlayPlayerFirstLegal();
+    await match.hand.autoPlayPlayerFirstLegal();
     match.endMatch();
     expect(match.snapshot().status).toBe('menu');
     expect(match.snapshot().handIndex).toBe(0);
@@ -53,14 +53,14 @@ describe('MatchSession', () => {
     expect(match.snapshot().matchSeed).toBeNull();
   });
 
-  it('advances dealer to the winner after a 平胡 settlement next hand', () => {
+  it('advances dealer to the winner after a 平胡 settlement next hand', async () => {
     const match = new MatchSession();
-    match.startMatch(1);
+    await match.startMatch(1);
     match.hand.loadPinghuWinDemo();
-    match.hand.claimWin();
+    await match.hand.claimWin();
     expect(match.snapshot().status).toBe('hand_settled');
     const winner = match.snapshot().hand.winSettlement!.winners[0]!.seat;
-    match.nextHand();
+    await match.nextHand();
     expect(match.snapshot().hand.state!.dealer).toBe(winner);
   });
 });

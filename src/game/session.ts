@@ -1,6 +1,9 @@
 import {
   buildSeatView,
   createEasyDecisionProvider,
+  createSharedDeadline,
+  decisionEquals,
+  EXTERNAL_AI_DEADLINE_MS,
   listLegalActions,
   type DecisionAction,
   type DecisionProvider,
@@ -31,6 +34,7 @@ export type SessionStatus =
   | 'awaiting_player_discard'
   | 'awaiting_player_win_response'
   | 'awaiting_player_claim_response'
+  | 'awaiting_ai'
   | 'exhaustive_draw'
   | 'hand_won';
 
@@ -66,9 +70,20 @@ export class PlaySession {
   private passClaims = false;
   /** When true, every seat passes win responses (流局 auto-play helper). */
   private forcePassWins = false;
-  private readonly ai: DecisionProvider;
+  private ai: DecisionProvider;
+  private busy = false;
+  private deadlineMs = EXTERNAL_AI_DEADLINE_MS;
 
-  constructor(ai: DecisionProvider = createEasyDecisionProvider()) {
+  constructor(
+    ai: DecisionProvider = createEasyDecisionProvider(),
+    opts?: { deadlineMs?: number },
+  ) {
+    this.ai = ai;
+    if (opts?.deadlineMs !== undefined) this.deadlineMs = opts.deadlineMs;
+  }
+
+  /** Replace the opponent DecisionProvider (e.g. after settings change). */
+  setDecisionProvider(ai: DecisionProvider): void {
     this.ai = ai;
   }
 
@@ -81,6 +96,7 @@ export class PlaySession {
     this.seed = null;
     this.passClaims = false;
     this.forcePassWins = false;
+    this.busy = false;
     this.emit();
   }
 
@@ -127,7 +143,7 @@ export class PlaySession {
     };
   }
 
-  start(seed: number, dealer?: Seat): void {
+  async start(seed: number, dealer?: Seat): Promise<void> {
     const started = applyCommand(null, {
       type: 'StartHand',
       seed,
@@ -139,22 +155,22 @@ export class PlaySession {
     this.selectedTileId = null;
     this.passClaims = false;
     this.forcePassWins = false;
-    this.advance();
+    await this.advance();
     this.emit();
   }
 
   /** After 流局, start the next hand with the same dealer. */
-  startNextHand(seed: number): void {
+  async startNextHand(seed: number): Promise<void> {
     if (!this.state) throw new Error('no hand in progress');
 
     if (this.state.phase === 'exhaustive_draw') {
-      this.start(seed, this.state.dealer);
+      await this.start(seed, this.state.dealer);
       return;
     }
 
     if (this.state.phase === 'hand_won' && this.state.winSettlement) {
       const nextDealer = nextDealerFromSettlement(this.state.winSettlement);
-      this.start(seed, nextDealer);
+      await this.start(seed, nextDealer);
       return;
     }
 
@@ -166,118 +182,172 @@ export class PlaySession {
    * player must act or the hand ends. AI choices are locked without applying
    * melds until every pending seat has answered.
    */
-  private advance(): void {
-    if (!this.state) return;
-
-    for (let guard = 0; guard < 400; guard++) {
-      if (!this.state) return;
-
-      if (this.state.phase === 'exhaustive_draw') {
-        this.status = 'exhaustive_draw';
-        this.selectedTileId = null;
-        return;
-      }
-      if (this.state.phase === 'hand_won') {
-        this.status = 'hand_won';
-        this.selectedTileId = null;
-        return;
-      }
-
-      if (this.state.phase === 'awaiting_win_response') {
-        this.resolveOpponentWinResponses();
+  private async advance(): Promise<void> {
+    if (!this.state || this.busy) return;
+    this.busy = true;
+    try {
+      for (let guard = 0; guard < 400; guard++) {
         if (!this.state) return;
-        if (this.state.phase !== 'awaiting_win_response' || !this.state.responseWindow) {
-          continue;
-        }
-        const pending = this.state.responseWindow.pending;
-        if (!pending.includes(PLAYER_SEAT)) {
-          continue;
-        }
-        const tileCode = this.state.responseWindow.tile.code;
-        if (this.forcePassWins || !canWinOnDiscard(this.state, PLAYER_SEAT, tileCode)) {
-          const result = applyCommand(this.state, { type: 'Pass', seat: PLAYER_SEAT });
-          this.state = result.state;
-          this.events.push(...result.events);
-          continue;
-        }
-        this.status = 'awaiting_player_win_response';
-        return;
-      }
 
-      if (this.state.phase === 'awaiting_claim_response') {
-        this.lockOpponentClaimResponses();
-        if (!this.state) return;
-        if (this.state.phase !== 'awaiting_claim_response' || !this.state.responseWindow) {
-          continue;
+        if (this.state.phase === 'exhaustive_draw') {
+          this.status = 'exhaustive_draw';
+          this.selectedTileId = null;
+          return;
         }
-        if (!this.state.responseWindow.pending.includes(PLAYER_SEAT)) {
-          continue;
-        }
-        this.status = 'awaiting_player_claim_response';
-        return;
-      }
-
-      if (this.state.phase === 'awaiting_discard') {
-        if (this.state.turn === PLAYER_SEAT) {
-          const drawn = ensureDrawn(this.state);
-          this.state = drawn.state;
-          this.events.push(...drawn.events);
-          this.status = 'awaiting_player_discard';
+        if (this.state.phase === 'hand_won') {
+          this.status = 'hand_won';
+          this.selectedTileId = null;
           return;
         }
 
-        const drawn = ensureDrawn(this.state);
-        this.state = drawn.state;
-        this.events.push(...drawn.events);
-        const seat = this.state.turn;
-        const action = this.chooseAiAction(seat);
-        this.applyAiAction(seat, action);
-        continue;
+        if (this.state.phase === 'awaiting_win_response') {
+          await this.resolveOpponentWinResponses();
+          if (!this.state) return;
+          if (this.state.phase !== 'awaiting_win_response' || !this.state.responseWindow) {
+            continue;
+          }
+          const pending = this.state.responseWindow.pending;
+          if (!pending.includes(PLAYER_SEAT)) {
+            continue;
+          }
+          const tileCode = this.state.responseWindow.tile.code;
+          if (this.forcePassWins || !canWinOnDiscard(this.state, PLAYER_SEAT, tileCode)) {
+            const result = applyCommand(this.state, { type: 'Pass', seat: PLAYER_SEAT });
+            this.state = result.state;
+            this.events.push(...result.events);
+            continue;
+          }
+          this.status = 'awaiting_player_win_response';
+          return;
+        }
+
+        if (this.state.phase === 'awaiting_claim_response') {
+          await this.lockOpponentClaimResponses();
+          if (!this.state) return;
+          if (this.state.phase !== 'awaiting_claim_response' || !this.state.responseWindow) {
+            continue;
+          }
+          if (!this.state.responseWindow.pending.includes(PLAYER_SEAT)) {
+            continue;
+          }
+          this.status = 'awaiting_player_claim_response';
+          return;
+        }
+
+        if (this.state.phase === 'awaiting_discard') {
+          if (this.state.turn === PLAYER_SEAT) {
+            const drawn = ensureDrawn(this.state);
+            this.state = drawn.state;
+            this.events.push(...drawn.events);
+            this.status = 'awaiting_player_discard';
+            return;
+          }
+
+          const drawn = ensureDrawn(this.state);
+          this.state = drawn.state;
+          this.events.push(...drawn.events);
+          const seat = this.state.turn;
+          this.status = 'awaiting_ai';
+          this.emit();
+          const { signal, cancel } = createSharedDeadline(this.deadlineMs);
+          try {
+            const action = await this.chooseAiAction(seat, signal);
+            this.applyAiAction(seat, action);
+          } finally {
+            cancel();
+          }
+          continue;
+        }
+
+        throw new Error(`unexpected phase ${this.state.phase}`);
       }
 
-      throw new Error(`unexpected phase ${this.state.phase}`);
+      throw new Error('session deadlock: advance exceeded guard');
+    } finally {
+      this.busy = false;
     }
-
-    throw new Error('session deadlock: advance exceeded guard');
   }
 
-  private resolveOpponentWinResponses(): void {
+  private async resolveOpponentWinResponses(): Promise<void> {
     if (!this.state || this.state.phase !== 'awaiting_win_response' || !this.state.responseWindow) {
       return;
     }
 
-    const pending = [...this.state.responseWindow.pending];
-    for (const seat of pending) {
-      if (seat === PLAYER_SEAT) continue;
+    const pending = [...this.state.responseWindow.pending].filter((seat) => seat !== PLAYER_SEAT);
+    if (pending.length === 0) return;
+
+    this.status = 'awaiting_ai';
+    this.emit();
+
+    const choices: Array<{ seat: Seat; action: DecisionAction }> = [];
+    if (this.forcePassWins) {
+      for (const seat of pending) {
+        choices.push({ seat, action: { type: 'Pass' } });
+      }
+    } else {
+      const { signal, cancel } = createSharedDeadline(this.deadlineMs);
+      try {
+        const settled = await Promise.all(
+          pending.map(async (seat) => ({
+            seat,
+            action: await this.chooseAiAction(seat, signal),
+          })),
+        );
+        choices.push(...settled);
+      } finally {
+        cancel();
+      }
+    }
+
+    for (const { seat, action } of choices) {
+      if (!this.state || this.state.phase !== 'awaiting_win_response') return;
       const window = this.state.responseWindow;
       if (!window || !window.pending.includes(seat)) continue;
-      const action = this.forcePassWins
-        ? ({ type: 'Pass' } as const)
-        : this.chooseAiAction(seat);
       this.applyAiAction(seat, action);
-      if (!this.state || this.state.phase !== 'awaiting_win_response') return;
     }
   }
 
   /** Lock AI claim choices without revealing them in the UI. */
-  private lockOpponentClaimResponses(): void {
+  private async lockOpponentClaimResponses(): Promise<void> {
     if (!this.state || this.state.phase !== 'awaiting_claim_response' || !this.state.responseWindow) {
       return;
     }
 
-    const pending = [...this.state.responseWindow.pending];
-    for (const seat of pending) {
-      if (seat === PLAYER_SEAT) continue;
+    const pending = [...this.state.responseWindow.pending].filter((seat) => seat !== PLAYER_SEAT);
+    if (pending.length === 0) return;
+
+    this.status = 'awaiting_ai';
+    this.emit();
+
+    const choices: Array<{ seat: Seat; action: DecisionAction }> = [];
+    if (this.passClaims) {
+      for (const seat of pending) {
+        choices.push({ seat, action: { type: 'Pass' } });
+      }
+    } else {
+      const { signal, cancel } = createSharedDeadline(this.deadlineMs);
+      try {
+        const settled = await Promise.all(
+          pending.map(async (seat) => ({
+            seat,
+            action: await this.chooseAiAction(seat, signal),
+          })),
+        );
+        choices.push(...settled);
+      } finally {
+        cancel();
+      }
+    }
+
+    for (const { seat, action } of choices) {
+      if (!this.state || this.state.phase !== 'awaiting_claim_response') return;
       const window = this.state.responseWindow;
       if (!window || !window.pending.includes(seat)) continue;
-
-      const action = this.passClaims ? ({ type: 'Pass' } as const) : this.chooseAiAction(seat);
       this.applyAiAction(seat, action);
-      if (!this.state || this.state.phase !== 'awaiting_claim_response') return;
     }
   }
 
-  private chooseAiAction(seat: Seat): DecisionAction {
+  private async chooseAiAction(seat: Seat, signal?: AbortSignal): Promise<DecisionAction> {
     if (!this.state) throw new Error('no hand');
     let legal = listLegalActions(this.state, seat);
     if (this.forcePassWins) {
@@ -296,7 +366,7 @@ export class PlaySession {
     if (legal.length === 0) {
       legal = [{ type: 'Pass' }];
     }
-    return this.ai.choose(buildSeatView(this.state, seat), legal);
+    return this.ai.choose(buildSeatView(this.state, seat), legal, { signal });
   }
 
   private applyAiAction(seat: Seat, action: DecisionAction): void {
@@ -349,7 +419,7 @@ export class PlaySession {
   }
 
   selectTile(tileId: string): void {
-    if (this.status !== 'awaiting_player_discard' || !this.state) return;
+    if (this.busy || this.status !== 'awaiting_player_discard' || !this.state) return;
     const legal = legalDiscardTileIds(this.state, PLAYER_SEAT);
     if (!legal.includes(tileId)) return;
     this.selectedTileId = tileId;
@@ -357,13 +427,13 @@ export class PlaySession {
   }
 
   /** Second click on the selected tile confirms discard. */
-  clickTile(tileId: string): void {
-    if (this.status !== 'awaiting_player_discard' || !this.state) return;
+  async clickTile(tileId: string): Promise<void> {
+    if (this.busy || this.status !== 'awaiting_player_discard' || !this.state) return;
     const legal = legalDiscardTileIds(this.state, PLAYER_SEAT);
     if (!legal.includes(tileId)) return;
 
     if (this.selectedTileId === tileId) {
-      this.confirmDiscard(tileId);
+      await this.confirmDiscard(tileId);
       return;
     }
     this.selectedTileId = tileId;
@@ -371,12 +441,12 @@ export class PlaySession {
   }
 
   /** Drag-into-river confirmation. */
-  discardByDrag(tileId: string): void {
-    this.confirmDiscard(tileId);
+  async discardByDrag(tileId: string): Promise<void> {
+    await this.confirmDiscard(tileId);
   }
 
-  private confirmDiscard(tileId: string): void {
-    if (this.status !== 'awaiting_player_discard' || !this.state) return;
+  private async confirmDiscard(tileId: string): Promise<void> {
+    if (this.busy || this.status !== 'awaiting_player_discard' || !this.state) return;
     const legal = legalDiscardTileIds(this.state, PLAYER_SEAT);
     if (!legal.includes(tileId)) return;
 
@@ -388,19 +458,19 @@ export class PlaySession {
     this.state = result.state;
     this.events.push(...result.events);
     this.selectedTileId = null;
-    this.advance();
+    await this.advance();
     this.emit();
   }
 
-  claimWin(): void {
-    if (!this.state) return;
+  async claimWin(): Promise<void> {
+    if (this.busy || !this.state) return;
 
     if (this.status === 'awaiting_player_discard' && canWinOnDraw(this.state, PLAYER_SEAT)) {
       const result = applyCommand(this.state, { type: 'DeclareWin', seat: PLAYER_SEAT });
       this.state = result.state;
       this.events.push(...result.events);
       this.selectedTileId = null;
-      this.advance();
+      await this.advance();
       this.emit();
       return;
     }
@@ -414,21 +484,21 @@ export class PlaySession {
     const result = applyCommand(this.state, { type: 'ClaimWin', seat: PLAYER_SEAT });
     this.state = result.state;
     this.events.push(...result.events);
-    this.advance();
+    await this.advance();
     this.emit();
   }
 
-  claimKong(): void {
-    if (this.status !== 'awaiting_player_claim_response' || !this.state) return;
+  async claimKong(): Promise<void> {
+    if (this.busy || this.status !== 'awaiting_player_claim_response' || !this.state) return;
     const result = applyCommand(this.state, { type: 'ClaimKong', seat: PLAYER_SEAT });
     this.state = result.state;
     this.events.push(...result.events);
-    this.advance();
+    await this.advance();
     this.emit();
   }
 
-  declareConcealedKong(code: TileCode): void {
-    if (this.status !== 'awaiting_player_discard' || !this.state) return;
+  async declareConcealedKong(code: TileCode): Promise<void> {
+    if (this.busy || this.status !== 'awaiting_player_discard' || !this.state) return;
     const result = applyCommand(this.state, {
       type: 'DeclareConcealedKong',
       seat: PLAYER_SEAT,
@@ -437,12 +507,12 @@ export class PlaySession {
     this.state = result.state;
     this.events.push(...result.events);
     this.selectedTileId = null;
-    this.advance();
+    await this.advance();
     this.emit();
   }
 
-  declareAddedKong(code: TileCode): void {
-    if (this.status !== 'awaiting_player_discard' || !this.state) return;
+  async declareAddedKong(code: TileCode): Promise<void> {
+    if (this.busy || this.status !== 'awaiting_player_discard' || !this.state) return;
     const result = applyCommand(this.state, {
       type: 'DeclareAddedKong',
       seat: PLAYER_SEAT,
@@ -451,21 +521,21 @@ export class PlaySession {
     this.state = result.state;
     this.events.push(...result.events);
     this.selectedTileId = null;
-    this.advance();
+    await this.advance();
     this.emit();
   }
 
-  claimPung(): void {
-    if (this.status !== 'awaiting_player_claim_response' || !this.state) return;
+  async claimPung(): Promise<void> {
+    if (this.busy || this.status !== 'awaiting_player_claim_response' || !this.state) return;
     const result = applyCommand(this.state, { type: 'ClaimPung', seat: PLAYER_SEAT });
     this.state = result.state;
     this.events.push(...result.events);
-    this.advance();
+    await this.advance();
     this.emit();
   }
 
-  claimChow(tileIds: [string, string]): void {
-    if (this.status !== 'awaiting_player_claim_response' || !this.state) return;
+  async claimChow(tileIds: [string, string]): Promise<void> {
+    if (this.busy || this.status !== 'awaiting_player_claim_response' || !this.state) return;
     const result = applyCommand(this.state, {
       type: 'ClaimChow',
       seat: PLAYER_SEAT,
@@ -473,12 +543,13 @@ export class PlaySession {
     });
     this.state = result.state;
     this.events.push(...result.events);
-    this.advance();
+    await this.advance();
     this.emit();
   }
 
-  passResponse(): void {
+  async passResponse(): Promise<void> {
     if (
+      this.busy ||
       (this.status !== 'awaiting_player_win_response' &&
         this.status !== 'awaiting_player_claim_response') ||
       !this.state
@@ -488,35 +559,35 @@ export class PlaySession {
     const result = applyCommand(this.state, { type: 'Pass', seat: PLAYER_SEAT });
     this.state = result.state;
     this.events.push(...result.events);
-    this.advance();
+    await this.advance();
     this.emit();
   }
 
   /** @deprecated use passResponse */
-  passWin(): void {
-    this.passResponse();
+  async passWin(): Promise<void> {
+    await this.passResponse();
   }
 
   /**
    * Test / e2e helper: discard the player's first legal tile and pass all claim
    * / win windows until 流局 (mid-hand 胡 must not end the demo).
    */
-  autoPlayPlayerFirstLegal(maxSteps = 400): void {
+  async autoPlayPlayerFirstLegal(maxSteps = 400): Promise<void> {
     this.passClaims = true;
     this.forcePassWins = true;
     try {
       for (let i = 0; i < maxSteps; i++) {
         if (this.status === 'awaiting_player_discard' && this.state) {
           const tileId = pickAutoDiscard(this.state, PLAYER_SEAT);
-          this.confirmDiscard(tileId);
+          await this.confirmDiscard(tileId);
           continue;
         }
         if (this.status === 'awaiting_player_claim_response') {
-          this.passResponse();
+          await this.passResponse();
           continue;
         }
         if (this.status === 'awaiting_player_win_response') {
-          this.passResponse();
+          await this.passResponse();
           continue;
         }
         return;
@@ -540,27 +611,6 @@ export class PlaySession {
     this.selectedTileId = null;
     this.status = 'awaiting_player_win_response';
     this.emit();
-  }
-}
-
-function decisionEquals(a: DecisionAction, b: DecisionAction): boolean {
-  if (a.type !== b.type) return false;
-  switch (a.type) {
-    case 'Discard':
-      return b.type === 'Discard' && a.tileId === b.tileId;
-    case 'DeclareConcealedKong':
-    case 'DeclareAddedKong':
-      return (
-        (b.type === 'DeclareConcealedKong' || b.type === 'DeclareAddedKong') &&
-        b.type === a.type &&
-        a.code === b.code
-      );
-    case 'ClaimChow':
-      return (
-        b.type === 'ClaimChow' && a.tileIds[0] === b.tileIds[0] && a.tileIds[1] === b.tileIds[1]
-      );
-    default:
-      return true;
   }
 }
 

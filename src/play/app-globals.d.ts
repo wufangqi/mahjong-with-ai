@@ -8,21 +8,21 @@ declare global {
   interface Window {
     __play?: {
       ready: boolean;
-      start: (seed: number) => void;
-      startMatch: (seed: number) => void;
+      start: (seed: number) => Promise<void>;
+      startMatch: (seed: number) => Promise<void>;
       endMatch: () => void;
       matchSnapshot: () => MatchSnapshot;
       snapshot: () => PlaySessionSnapshot;
-      clickTile: (tileId: string) => void;
-      discardByDrag: (tileId: string) => void;
-      autoPlayToDraw: () => void;
-      claimWin: () => void;
-      claimPung: () => void;
-      claimChow: (tileIds: [string, string]) => void;
-      passWin: () => void;
-      passResponse: () => void;
-      startNextHand: (seed?: number) => void;
-      loadPinghuWinDemo: () => void;
+      clickTile: (tileId: string) => Promise<void>;
+      discardByDrag: (tileId: string) => Promise<void>;
+      autoPlayToDraw: () => Promise<void>;
+      claimWin: () => Promise<void>;
+      claimPung: () => Promise<void>;
+      claimChow: (tileIds: [string, string]) => Promise<void>;
+      passWin: () => Promise<void>;
+      passResponse: () => Promise<void>;
+      startNextHand: (seed?: number) => Promise<void>;
+      loadPinghuWinDemo: () => Promise<void>;
       replayScene: () => void;
       lastScenePlans: () => WinScenePlan[];
       selectTheme: (id: ThemeId) => Promise<ThemeSelectResult>;

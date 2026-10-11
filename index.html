@@ -14,7 +14,7 @@
 
   <header>
     <h1>AI 爽胡麻将</h1>
-    <p>连续多局 · 三名 easy 对手 · 无整场总分</p>
+    <p>连续多局 · 可选外接 AI · 无整场总分</p>
   </header>
 
   <div id="chrome" data-testid="chrome">
@@ -37,14 +37,55 @@
   <div id="main-menu" data-testid="main-menu">
     <div class="main-menu-inner">
       <h2>主菜单</h2>
-      <p class="menu-blurb">开始一场本地对局。第一局随机庄；结算后可下一局或结束。无总分、无筹码。</p>
+      <p class="menu-blurb">开始一场本地对局。第一局随机庄；结算后可下一局或结束。无总分、无筹码。对手默认真 easy，可独立改外接 AI。</p>
       <label class="seed-field menu-seed">
         <span>种子</span>
         <input id="seed" data-testid="seed-input" type="number" value="42" />
       </label>
+      <button id="open-ai-settings" data-testid="open-ai-settings" type="button" class="secondary-btn">对手 / 外接 AI</button>
       <button id="start-match" data-testid="start-match" type="button">开始一场</button>
       <!-- Compat alias for older e2e / harnesses -->
       <button id="start" data-testid="start-hand" type="button" class="sr-only" tabindex="-1">开始一场</button>
+    </div>
+  </div>
+
+  <div id="ai-settings" data-testid="ai-settings" hidden>
+    <div class="ai-settings-inner">
+      <h2>对手与外接 AI</h2>
+      <p class="menu-blurb">三家来源可独立选择；外接座位共用代理与模型。令牌仅当前会话有效。</p>
+      <div class="ai-seat-row">
+        <label>下家 <select id="ai-source-1" data-testid="ai-source-1"><option value="easy">内置 easy</option><option value="external">外接 AI</option></select></label>
+        <label>对家 <select id="ai-source-2" data-testid="ai-source-2"><option value="easy">内置 easy</option><option value="external">外接 AI</option></select></label>
+        <label>上家 <select id="ai-source-3" data-testid="ai-source-3"><option value="easy">内置 easy</option><option value="external">外接 AI</option></select></label>
+      </div>
+      <label class="ai-field">代理地址 <input id="ai-proxy-url" data-testid="ai-proxy-url" type="url" placeholder="https://… 或 http://localhost:…" autocomplete="off" /></label>
+      <label class="ai-field">模型名 <input id="ai-model" data-testid="ai-model" type="text" placeholder="model-id" autocomplete="off" /></label>
+      <label class="ai-field">代理令牌（仅会话） <input id="ai-proxy-token" data-testid="ai-proxy-token" type="password" placeholder="不会写入本地存储" autocomplete="off" /></label>
+      <p id="ai-settings-error" data-testid="ai-settings-error" class="ai-settings-error" hidden></p>
+      <div class="draw-actions">
+        <button id="ai-settings-save" data-testid="ai-settings-save" type="button">保存</button>
+        <button id="ai-settings-cancel" data-testid="ai-settings-cancel" type="button" class="secondary-btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ai-disclosure" data-testid="ai-disclosure" hidden>
+    <div class="ai-disclosure-inner">
+      <h2 id="ai-disclosure-title">启用外接 AI</h2>
+      <p id="ai-disclosure-intro" class="menu-blurb"></p>
+      <p><strong id="ai-disclosure-proxy-label">代理地址</strong>：<span id="ai-disclosure-proxy" data-testid="ai-disclosure-proxy"></span></p>
+      <div class="disclosure-block">
+        <strong id="ai-disclosure-sent-label">将发送</strong>
+        <ul id="ai-disclosure-sent" data-testid="ai-disclosure-sent"></ul>
+      </div>
+      <div class="disclosure-block">
+        <strong id="ai-disclosure-withheld-label">不发送</strong>
+        <ul id="ai-disclosure-withheld" data-testid="ai-disclosure-withheld"></ul>
+      </div>
+      <div class="draw-actions">
+        <button id="ai-disclosure-confirm" data-testid="ai-disclosure-confirm" type="button">确认启用</button>
+        <button id="ai-disclosure-cancel" data-testid="ai-disclosure-cancel" type="button" class="secondary-btn">取消</button>
+      </div>
     </div>
   </div>
 
