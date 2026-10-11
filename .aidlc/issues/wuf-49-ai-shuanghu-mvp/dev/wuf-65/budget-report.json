@@ -1,0 +1,68 @@
+{
+  "measuredAt": "2026-10-11T04:02:32.758Z",
+  "gitHint": null,
+  "budgets": {
+    "firstScreenTransferBytes": 3145728,
+    "themeOnDemandBytes": 1048576,
+    "staticSceneDrawCalls": 100,
+    "coldStartMenuMs": 3000,
+    "midGameplayFps": 60,
+    "topSceneFpsFloor": 30
+  },
+  "firstScreen": {
+    "entries": [
+      {
+        "path": "index.html",
+        "bytes": 3177,
+        "encoding": "gzip"
+      },
+      {
+        "path": "assets/main-Dqd-_c7q.js",
+        "bytes": 31145,
+        "encoding": "gzip"
+      },
+      {
+        "path": "assets/themeManager-Cmvx55DQ.js",
+        "bytes": 3751,
+        "encoding": "gzip"
+      },
+      {
+        "path": "assets/skyBlend-Cr2v-vA4.js",
+        "bytes": 129497,
+        "encoding": "gzip"
+      },
+      {
+        "path": "assets/themeManager-CWObWkJR.css",
+        "bytes": 3912,
+        "encoding": "gzip"
+      },
+      {
+        "path": "assets/source-han-sans-sc-subset-Dy7vYMnB.woff2",
+        "bytes": 76256,
+        "encoding": "raw"
+      },
+      {
+        "path": "assets/source-han-serif-sc-subset-BmXB3vaA.woff2",
+        "bytes": 110068,
+        "encoding": "raw"
+      }
+    ],
+    "totalBytes": 357806,
+    "budgetBytes": 3145728,
+    "withinBudget": true
+  },
+  "themeOnDemand": {
+    "themeId": "court-palace",
+    "entries": [
+      {
+        "path": "assets/courtPalace-BUTbo8AA.js",
+        "bytes": 481,
+        "encoding": "gzip"
+      }
+    ],
+    "totalBytes": 481,
+    "budgetBytes": 1048576,
+    "withinBudget": true
+  },
+  "note": "Draw-call / FPS / cold-start / stability numbers are collected by e2e/budget.spec.ts; this CLI covers compressed transfer sizes from dist/."
+}

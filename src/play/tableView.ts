@@ -14,24 +14,24 @@ import {
 import { createParticleSystem } from '../particles/particleSystem';
 import type { ParticleSystem } from '../particles/types';
 import {
-  createTile,
   getTileBackPattern,
   setTileBackAppearance,
-  setTileCode,
   TILE_D,
   TILE_H,
   TILE_W,
-  type PreviewTile,
 } from '../preview/tiles';
 import type { QualitySettings } from '../quality/types';
 import { settingsForTier } from '../quality/presets';
 import { blendSkyColumn, rgbToHex } from '../theme/skyBlend';
 import type { ThemeModules } from '../theme/types';
+import { TileInstanceBatch, type TileInstancePose } from './tileBatch';
 
-type TileUserData = {
+type PlayerHandSlot = {
   tileId: string;
-  seat: Seat;
-  kind: 'hand' | 'river' | 'opponent';
+  code: PhysicalTile['code'];
+  instanceIndex: number;
+  home: THREE.Vector3;
+  rotation: THREE.Euler;
 };
 
 const SEAT_YAW: Record<Seat, number> = {
@@ -48,10 +48,9 @@ export class TableView {
   readonly riverZone: THREE.Mesh;
 
   private root = new THREE.Group();
-  private playerTiles: PreviewTile[] = [];
-  private opponentGroups: THREE.Group[] = [];
-  private riverGroups: THREE.Group[] = [];
-  private meldGroups: THREE.Group[] = [];
+  private playerHand: PlayerHandSlot[] = [];
+  private batch: TileInstanceBatch | null = null;
+  private lastDrawCalls = 0;
   private dealerMarker: THREE.Mesh;
   private feltMat: THREE.MeshStandardMaterial;
   private railMat: THREE.MeshStandardMaterial;
@@ -76,6 +75,7 @@ export class TableView {
   private pointer = new THREE.Vector2();
   private dragTileId: string | null = null;
   private dragOrigin: THREE.Vector3 | null = null;
+  private dragInstanceIndex = -1;
   private quality: QualitySettings = settingsForTier('mid');
   private gpuParticlesAvailable = true;
   private composer: EffectComposer | null = null;
@@ -141,16 +141,21 @@ export class TableView {
     this.markSprite.position.set(0, 0.04, 0);
     this.root.add(this.markSprite);
 
-    for (let seat = 0; seat < 4; seat++) {
-      this.opponentGroups.push(new THREE.Group());
-      this.riverGroups.push(new THREE.Group());
-      this.meldGroups.push(new THREE.Group());
-      this.root.add(this.opponentGroups[seat]!);
-      this.root.add(this.riverGroups[seat]!);
-      this.root.add(this.meldGroups[seat]!);
-    }
-
     window.addEventListener('resize', () => this.onResize());
+  }
+
+  /** Last WebGL draw call count from `render()` (static-scene budget seam). */
+  drawCallCount(): number {
+    return this.lastDrawCalls;
+  }
+
+  private ensureBatch(): TileInstanceBatch {
+    if (!this.batch) {
+      this.batch = new TileInstanceBatch(160);
+      this.root.add(this.batch.mesh);
+      this.root.add(this.batch.outlines);
+    }
+    return this.batch;
   }
 
   private buildTable(): void {
@@ -260,6 +265,7 @@ export class TableView {
       color: this.lerpHex(from.tileBack.color, to.tileBack.color, u),
       pattern,
     });
+    this.batch?.syncBackAppearance();
 
     const glyph = u < 0.5 ? from.mark.glyph : to.mark.glyph;
     const markColor = this.lerpHex(from.mark.color, to.mark.color, u);
@@ -547,31 +553,29 @@ export class TableView {
 
     this.placeDealerMarker(state.dealer);
 
+    const poses: TileInstancePose[] = [];
     for (const seat of [0, 1, 2, 3] as Seat[]) {
-      this.layoutRiver(seat, state.seats[seat].river);
-      this.layoutMelds(seat, state.seats[seat].melds);
+      this.collectRiverPoses(seat, state.seats[seat].river, poses);
+      this.collectMeldPoses(seat, state.seats[seat].melds, poses);
       if (seat === PLAYER_SEAT) {
-        this.layoutPlayerHand(displayHand(state.seats[seat]), selectedTileId);
+        this.collectPlayerHandPoses(displayHand(state.seats[seat]), selectedTileId, poses);
       } else {
-        this.layoutOpponentHand(seat, displayHand(state.seats[seat]).length);
+        this.collectOpponentPoses(seat, displayHand(state.seats[seat]).length, poses);
       }
     }
+    const batch = this.ensureBatch();
+    batch.syncBackAppearance();
+    batch.setInstances(poses);
 
     void totalTileCount(state);
   }
 
   private clearDynamic(): void {
-    for (const tile of this.playerTiles) this.root.remove(tile.group);
-    this.playerTiles = [];
-    for (const g of this.opponentGroups) {
-      while (g.children.length) g.remove(g.children[0]!);
-    }
-    for (const g of this.riverGroups) {
-      while (g.children.length) g.remove(g.children[0]!);
-    }
-    for (const g of this.meldGroups) {
-      while (g.children.length) g.remove(g.children[0]!);
-    }
+    this.playerHand = [];
+    this.dragTileId = null;
+    this.dragOrigin = null;
+    this.dragInstanceIndex = -1;
+    this.batch?.clear();
   }
 
   private placeDealerMarker(dealer: Seat): void {
@@ -582,88 +586,109 @@ export class TableView {
     this.dealerMarker.position.set(pos.x * 0.55, 0.05, pos.z * 0.55);
   }
 
-  private layoutPlayerHand(tiles: PhysicalTile[], selectedTileId: string | null): void {
+  private collectPlayerHandPoses(
+    tiles: PhysicalTile[],
+    selectedTileId: string | null,
+    out: TileInstancePose[],
+  ): void {
     const n = tiles.length;
     tiles.forEach((tile, i) => {
-      const preview = createTile(tile.code);
       const gap = i === n - 1 && n === 14 ? 0.22 : 0;
       const x = (i - (n - 1) / 2) * (TILE_W + 0.04) + gap;
       const selected = tile.id === selectedTileId;
-      preview.group.position.set(x, TILE_H / 2 + (selected ? 0.18 : 0.02), 4.2);
-      preview.outline.material.opacity = selected ? 0.7 : 0;
-      const data: TileUserData = { tileId: tile.id, seat: PLAYER_SEAT, kind: 'hand' };
-      preview.group.userData = data;
-      preview.mesh.userData = data;
-      this.root.add(preview.group);
-      this.playerTiles.push(preview);
+      const position = new THREE.Vector3(x, TILE_H / 2 + (selected ? 0.18 : 0.02), 4.2);
+      const rotation = new THREE.Euler(0, 0, 0);
+      const instanceIndex = out.length;
+      out.push({ code: tile.code, position: position.clone(), rotation, selected });
+      this.playerHand.push({
+        tileId: tile.id,
+        code: tile.code,
+        instanceIndex,
+        home: position.clone(),
+        rotation,
+      });
     });
   }
 
-  private layoutOpponentHand(seat: Seat, count: number): void {
-    const group = this.opponentGroups[seat]!;
+  private seatWorldPose(
+    seat: Seat,
+    local: THREE.Vector3,
+    localRot: THREE.Euler,
+  ): { position: THREE.Vector3; rotation: THREE.Euler } {
     const yaw = SEAT_YAW[seat];
-    for (let i = 0; i < count; i++) {
-      const tile = createTile('P');
-      // Face down: rotate so back faces up-ish toward table center look
-      tile.group.rotation.x = Math.PI / 2;
-      const x = (i - (count - 1) / 2) * (TILE_W * 0.72);
-      tile.group.position.set(x, TILE_D / 2 + 0.02, 4.05);
-      group.add(tile.group);
-    }
-    group.rotation.y = yaw;
+    const position = local.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    const rotation = new THREE.Euler(localRot.x, localRot.y + yaw, localRot.z, localRot.order);
+    return { position, rotation };
   }
 
-  private layoutRiver(seat: Seat, river: PhysicalTile[]): void {
-    const group = this.riverGroups[seat]!;
-    const yaw = SEAT_YAW[seat];
+  private collectOpponentPoses(seat: Seat, count: number, out: TileInstancePose[]): void {
+    for (let i = 0; i < count; i++) {
+      const x = (i - (count - 1) / 2) * (TILE_W * 0.72);
+      const local = new THREE.Vector3(x, TILE_D / 2 + 0.02, 4.05);
+      const { position, rotation } = this.seatWorldPose(
+        seat,
+        local,
+        new THREE.Euler(Math.PI / 2, 0, 0),
+      );
+      out.push({ code: 'P', position, rotation, faceDown: true });
+    }
+  }
+
+  private collectRiverPoses(seat: Seat, river: PhysicalTile[], out: TileInstancePose[]): void {
     river.forEach((tile, i) => {
-      const preview = createTile(tile.code);
       const col = i % 6;
       const row = Math.floor(i / 6);
-      preview.group.rotation.x = -Math.PI / 2;
-      preview.group.position.set(
+      const local = new THREE.Vector3(
         (col - 2.5) * (TILE_W * 0.95),
         TILE_D / 2 + 0.01,
         1.35 + row * (TILE_H * 0.55),
       );
-      group.add(preview.group);
+      const { position, rotation } = this.seatWorldPose(
+        seat,
+        local,
+        new THREE.Euler(-Math.PI / 2, 0, 0),
+      );
+      out.push({ code: tile.code, position, rotation });
     });
-    group.rotation.y = yaw;
   }
 
-  private layoutMelds(seat: Seat, melds: HandState['seats'][Seat]['melds']): void {
-    const group = this.meldGroups[seat]!;
-    const yaw = SEAT_YAW[seat];
+  private collectMeldPoses(
+    seat: Seat,
+    melds: HandState['seats'][Seat]['melds'],
+    out: TileInstancePose[],
+  ): void {
     let xCursor = -3.2;
     melds.forEach((meld) => {
       meld.tiles.forEach((tile, i) => {
-        const preview = createTile(tile.code);
-        preview.group.rotation.x = -Math.PI / 2;
-        const claimed = tile.id === meld.claimedTileId;
-        preview.group.position.set(
+        const local = new THREE.Vector3(
           xCursor + i * (TILE_W * 0.92),
           TILE_D / 2 + 0.01,
           3.35,
         );
-        if (claimed) {
-          preview.outline.material.opacity = 0.55;
-          preview.outline.material.color.setHex(0xf5c46a);
-        }
-        group.add(preview.group);
+        const { position, rotation } = this.seatWorldPose(
+          seat,
+          local,
+          new THREE.Euler(-Math.PI / 2, 0, 0),
+        );
+        out.push({
+          code: tile.code,
+          position,
+          rotation,
+          selected: tile.id === meld.claimedTileId,
+        });
       });
       xCursor += meld.tiles.length * (TILE_W * 0.92) + 0.18;
     });
-    group.rotation.y = yaw;
   }
 
   pickPlayerTile(clientX: number, clientY: number): string | null {
+    if (!this.batch) return null;
     this.setPointer(clientX, clientY);
-    const meshes = this.playerTiles.map((t) => t.mesh);
-    const hits = this.raycaster.intersectObjects(meshes, false);
-    const hit = hits[0]?.object;
-    if (!hit) return null;
-    const data = hit.userData as TileUserData;
-    return data.kind === 'hand' ? data.tileId : null;
+    const hits = this.raycaster.intersectObject(this.batch.mesh, false);
+    const hit = hits[0];
+    if (!hit || hit.instanceId == null) return null;
+    const slot = this.playerHand.find((s) => s.instanceIndex === hit.instanceId);
+    return slot?.tileId ?? null;
   }
 
   isOverRiver(clientX: number, clientY: number): boolean {
@@ -674,31 +699,44 @@ export class TableView {
 
   beginDrag(tileId: string): void {
     this.dragTileId = tileId;
-    const tile = this.playerTiles.find((t) => (t.group.userData as TileUserData).tileId === tileId);
-    this.dragOrigin = tile ? tile.group.position.clone() : null;
+    const slot = this.playerHand.find((s) => s.tileId === tileId);
+    this.dragOrigin = slot ? slot.home.clone() : null;
+    this.dragInstanceIndex = slot?.instanceIndex ?? -1;
   }
 
   moveDrag(clientX: number, clientY: number): void {
-    if (!this.dragTileId) return;
-    const tile = this.playerTiles.find((t) => (t.group.userData as TileUserData).tileId === this.dragTileId);
-    if (!tile) return;
+    if (!this.dragTileId || this.dragInstanceIndex < 0 || !this.batch) return;
+    const slot = this.playerHand.find((s) => s.tileId === this.dragTileId);
+    if (!slot) return;
     this.setPointer(clientX, clientY);
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const target = new THREE.Vector3();
     this.raycaster.ray.intersectPlane(plane, target);
-    if (target) tile.group.position.set(target.x, 0.35, target.z);
+    if (!target) return;
+    this.batch.setInstancePose(this.dragInstanceIndex, {
+      code: slot.code,
+      position: new THREE.Vector3(target.x, 0.35, target.z),
+      rotation: slot.rotation,
+      selected: true,
+    });
   }
 
   endDrag(clientX: number, clientY: number): { tileId: string; intoRiver: boolean } | null {
     if (!this.dragTileId) return null;
     const tileId = this.dragTileId;
     const intoRiver = this.isOverRiver(clientX, clientY);
-    const tile = this.playerTiles.find((t) => (t.group.userData as TileUserData).tileId === tileId);
-    if (tile && this.dragOrigin && !intoRiver) {
-      tile.group.position.copy(this.dragOrigin);
+    const slot = this.playerHand.find((s) => s.tileId === tileId);
+    if (slot && this.dragOrigin && !intoRiver && this.batch) {
+      this.batch.setInstancePose(slot.instanceIndex, {
+        code: slot.code,
+        position: this.dragOrigin.clone(),
+        rotation: slot.rotation,
+        selected: true,
+      });
     }
     this.dragTileId = null;
     this.dragOrigin = null;
+    this.dragInstanceIndex = -1;
     return { tileId, intoRiver };
   }
 
@@ -719,15 +757,13 @@ export class TableView {
       }
     }
     this.tickParticles(now);
+    this.renderer.info.autoReset = true;
+    this.renderer.info.reset();
     if (this.composer && this.quality.bloom !== 'off') {
       this.composer.render();
     } else {
       this.renderer.render(this.scene, this.camera);
     }
+    this.lastDrawCalls = this.renderer.info.render.calls;
   }
-}
-
-/** Re-skin a tile mesh when codes change without recreating geometry. */
-export function updateTileCode(tile: PreviewTile, code: PhysicalTile['code']): void {
-  setTileCode(tile, code);
 }

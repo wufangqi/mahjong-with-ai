@@ -4,7 +4,7 @@ import type { PlaySessionSnapshot } from '../game/session';
 import type { ReducedMotionMode } from '../motion';
 import type { GpuProbeInfo, QualityMode, QualitySettings, QualityTier } from '../quality/types';
 import type { ThemeId, ThemeModules, ThemePalette, ThemeSelectResult } from '../theme/types';
-import type { WinScenePlan } from './winPresentation';
+import type { SceneTier, WinScenePlan } from './winPresentation';
 
 declare global {
   interface Window {
@@ -67,6 +67,15 @@ declare global {
       endQualityGame: () => void;
       injectFpsSample: (dtMs: number, fps: number) => QualityTier | null;
       gpuProbe: () => GpuProbeInfo;
+      drawCallCount: () => number;
+      sampleFps: (ms?: number) => Promise<number>;
+      heapUsed: () => number | null;
+      gpuResourceSnapshot: () => { geometries: number; textures: number; programs: number };
+      hasSustainedGrowth: (
+        samples: number[],
+        opts?: { maxBytesPerStep?: number; minDeltaBytes?: number },
+      ) => boolean;
+      playSceneDemo: (tier: SceneTier) => void;
     };
   }
 }

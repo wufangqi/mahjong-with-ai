@@ -85,6 +85,27 @@ body.scene-playing #hint { display: none !important; }
 body[data-theme="court-palace"] { --felt: #8b1e2d; --gold: #d4af37; }
 body[data-theme="classic-green"] { --felt: #0d5a3c; --gold: #f5c46a; }
 
+#boot-loading {
+  position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+  background: rgba(6, 14, 12, .92); pointer-events: none;
+}
+#boot-loading[hidden] { display: none !important; }
+.boot-loading-inner {
+  width: min(320px, 80vw); display: flex; flex-direction: column; gap: 12px; align-items: stretch;
+}
+#boot-loading-label {
+  margin: 0; text-align: center; letter-spacing: 2px; color: var(--gold); font-size: 15px;
+}
+.boot-loading-track {
+  height: 8px; border-radius: 999px; background: rgba(255,255,255,.08);
+  border: 1px solid rgba(245,196,106,.25); overflow: hidden;
+}
+#boot-loading-bar {
+  height: 100%; width: 0%; background: linear-gradient(90deg, #c9a227, #f5c46a);
+  transition: width .2s ease;
+}
+body.loading #main-menu { visibility: hidden; }
+
 #main-menu {
   position: fixed; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center;
   background: rgba(4, 12, 10, .55); padding: 24px;

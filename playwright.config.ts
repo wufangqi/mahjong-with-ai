@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { CHROME_UHD_GPU_ARGS } from './tools/budget/chromeGpuArgs.mjs';
 
 export default defineConfig({
   testDir: 'e2e',
@@ -19,7 +20,13 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: {
+          // ANGLE/Vulkan binds Intel UHD; precise-memory for soak samples (WUF-65).
+          args: CHROME_UHD_GPU_ARGS,
+        },
+      },
     },
   ],
 });

@@ -27,4 +27,9 @@ python3 -m venv .tools-venv
 
 Keep `src/fonts/OFL.txt` with the SIL OFL 1.1 text from the upstream package.
 
+`chars-runtime.txt` must include every user-visible CJK glyph **and** UI punctuation
+(`–—…、。！，：；？`). After regenerating WOFF2, `src/budget/fontCmap.test.ts` asserts
+the shipped cmap still covers that set (ADR-0006).
+
+
 Offline 「胡」 glyph lattice: `tools/glyph/generate-hu.py` writes `src/fonts/glyph-hu.json`.

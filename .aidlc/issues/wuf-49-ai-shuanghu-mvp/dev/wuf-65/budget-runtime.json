@@ -1,0 +1,29 @@
+{
+  "measuredAt": "2026-10-11T04:02:44.363Z",
+  "gpuRenderer": "ANGLE (Intel, Vulkan 1.4.318 (Intel(R) UHD Graphics 630 (CFL GT2) (0x00003E92)), Intel open-source Mesa driver)",
+  "uhd620Class": true,
+  "hostPciGpu": [
+    "00:02.0 VGA compatible controller: Intel Corporation CoffeeLake-S GT2 [UHD Graphics 630]"
+  ],
+  "uhd620ClassHost": true,
+  "midFpsSample": 59.9940005770564,
+  "topFpsSample": 60,
+  "midFpsTarget": 60,
+  "topFpsFloor": 30,
+  "fpsGateApplied": true,
+  "drawCalls": 1,
+  "handSamples": 50,
+  "themeSwitchSamples": 20,
+  "sceneReplaySamples": 100,
+  "handSustainedGrowth": false,
+  "themeSustainedGrowth": false,
+  "sceneSustainedGrowth": false,
+  "gpuResourceSustainedGrowth": false,
+  "networkProfile": {
+    "name": "Fast 4G (CDP)",
+    "downloadMbps": 1.6,
+    "uploadMbps": 0.75,
+    "latencyMs": 150
+  },
+  "note": "Heap via performance.memory; GPU resources via renderer.info.memory (no public VRAM API). Absolute mid/top FPS gate applies only when browser gpuProbe is UHD-class; hostPciGpu records the machine GPU even if Chromium is on SwiftShader."
+}

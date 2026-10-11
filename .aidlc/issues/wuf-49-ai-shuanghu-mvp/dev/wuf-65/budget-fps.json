@@ -1,0 +1,28 @@
+{
+  "measuredAt": "2026-10-11T04:02:29.250Z",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "chromeArgs": [
+    "--ignore-gpu-blocklist",
+    "--enable-webgl",
+    "--disable-software-rasterizer",
+    "--use-angle=vulkan",
+    "--enable-features=Vulkan",
+    "--disable-vulkan-surface",
+    "--enable-precise-memory-info",
+    "--disable-dev-shm-usage"
+  ],
+  "gpuRenderer": "ANGLE (Intel, Vulkan 1.4.318 (Intel(R) UHD Graphics 630 (CFL GT2) (0x00003E92)), Intel open-source Mesa driver)",
+  "uhd620Class": true,
+  "midFpsSample": 59.99200105508342,
+  "topFpsSample": 59.329378026376666,
+  "topSceneTier": "top",
+  "midFpsTarget": 60,
+  "topFpsFloor": 30,
+  "midWithinBudget": true,
+  "topWithinBudget": true,
+  "fpsGateApplied": true,
+  "note": "ANGLE/Vulkan path. Absolute 60/30 gate requires UHD-class gpuProbe (ensure-dri-acl.sh if render node is not writable)."
+}

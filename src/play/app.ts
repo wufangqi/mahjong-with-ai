@@ -18,7 +18,14 @@ import {
   sfxForDomainEvent,
   sfxForSceneTier,
 } from '../audio';
-import { FULL_SET_SIZE, PLAYER_SEAT, totalTileCount, type Command, type Seat } from '../core';
+import {
+  FULL_SET_SIZE,
+  PLAYER_SEAT,
+  totalTileCount,
+  type Command,
+  type FanPatternId,
+  type Seat,
+} from '../core';
 import { MatchSession } from '../game/match';
 import { isReducedMotionMode, ReducedMotionController } from '../motion';
 import { PersistStore, replayCommands, type ActiveSave, type LoggedCommand } from '../persist';
@@ -34,11 +41,21 @@ import { listThemeOptions, loadTheme } from '../theme/catalog';
 import { ThemeManager } from '../theme/themeManager';
 import { isThemeId } from '../theme/schema';
 import { THEME_STORAGE_KEY, type ThemeId } from '../theme/types';
+import { hasSustainedGrowth, type LoadStageId } from '../budget';
 import { TableView } from './tableView';
 import { formatTileCodes } from './tileLabels';
-import { patternLabels, WinSceneScheduler, type WinScenePlan } from './winPresentation';
+import {
+  patternLabels,
+  WinSceneScheduler,
+  type SceneTier,
+  type WinScenePlan,
+} from './winPresentation';
 
 const AUTO_SKIP_STORAGE_KEY = 'mahjong.scene.autoSkipOpponent';
+
+export type BootPlayAppOptions = {
+  onStage?: (stage: LoadStageId) => void;
+};
 
 function mustEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -88,7 +105,8 @@ function browserSessionStorage(): Storage {
   }
 }
 
-export function bootPlayApp(): void {
+export function bootPlayApp(opts: BootPlayAppOptions = {}): Promise<void> {
+  const onStage = opts.onStage;
   const canvas = mustEl<HTMLCanvasElement>('c');
   const seedInput = mustEl<HTMLInputElement>('seed');
   const statusEl = mustEl<HTMLElement>('status');
@@ -302,6 +320,7 @@ export function bootPlayApp(): void {
   let sceneReleaseTimer: number | null = null;
   let lastFrameAt = performance.now();
   let fpsEma = 60;
+  let renderedFrameCount = 0;
 
   const applyQualityToTable = (): void => {
     table.applyQuality(quality.getSettings(), {
@@ -1036,6 +1055,7 @@ export function bootPlayApp(): void {
       syncQualityChrome();
     }
     table.render();
+    renderedFrameCount += 1;
   };
   frame();
 
@@ -1185,10 +1205,63 @@ export function bootPlayApp(): void {
       return changed;
     },
     gpuProbe: () => ({ ...gpuProbe }),
+    drawCallCount: () => table.drawCallCount(),
+    /** FPS from real `table.render` ticks (not idle rAF). */
+    sampleFps: (ms = 500) =>
+      new Promise<number>((resolve) => {
+        const startCount = renderedFrameCount;
+        const start = performance.now();
+        window.setTimeout(() => {
+          const elapsed = Math.max(1, performance.now() - start);
+          const frames = renderedFrameCount - startCount;
+          resolve((frames * 1000) / elapsed);
+        }, ms);
+      }),
+    heapUsed: () => {
+      const perf = performance as Performance & { memory?: { usedJSHeapSize: number } };
+      return perf.memory?.usedJSHeapSize ?? null;
+    },
+    /** Three.js resource counts — proxy when browser VRAM APIs are unavailable. */
+    gpuResourceSnapshot: () => {
+      const info = table.renderer.info;
+      return {
+        geometries: info.memory.geometries,
+        textures: info.memory.textures,
+        programs: info.programs?.length ?? 0,
+      };
+    },
+    hasSustainedGrowth: (
+      samples: number[],
+      opts?: { maxBytesPerStep?: number; minDeltaBytes?: number },
+    ) => hasSustainedGrowth(samples, opts),
+    /**
+     * Harness: schedule a single-seat win scene of the given presentation tier
+     * so mid/top FPS can be sampled during an active scene.
+     */
+    playSceneDemo: (tier: SceneTier) => {
+      const patternsByTier: Record<SceneTier, FanPatternId[]> = {
+        basic: ['pinghu'],
+        big: ['pengpenghu'],
+        top: ['shisanyao'],
+      };
+      scenes.scheduleWinners(
+        [
+          {
+            seat: PLAYER_SEAT,
+            patterns: patternsByTier[tier],
+            fan: 1,
+            hand: [],
+          },
+        ],
+        1,
+      );
+    },
   };
 
-  void themes.start().then(async () => {
+  return themes.start().then(async () => {
+    onStage?.('default-theme');
     applyActiveTheme();
+    onStage?.('renderer');
     const measured = await measureInitialFps();
     if (quality.getMode() === 'auto') {
       quality.selectInitial(gpuProbe, measured);
@@ -1199,6 +1272,7 @@ export function bootPlayApp(): void {
     syncMotionChrome();
     await refreshPersistMenu();
     showMenu();
+    onStage?.('menu');
     document.body.classList.add('ready');
     if (window.__play) window.__play.ready = true;
     refresh();
