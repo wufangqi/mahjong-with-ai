@@ -1,4 +1,6 @@
-import type { PlaySessionSnapshot } from './session';
+import type { Command, HandState } from '../core';
+import type { ActiveSave } from '../persist';
+import type { PlaySessionSnapshot, SessionStatus } from './session';
 import { PlaySession } from './session';
 
 export type MatchStatus = 'menu' | 'in_hand' | 'hand_settled';
@@ -61,11 +63,71 @@ export class MatchSession {
 
   /** Start a new match from the main menu. First dealer is random from `seed`. */
   startMatch(seed: number): void {
+    this.hand.reset();
     this.matchSeed = seed >>> 0;
     this.handIndex = 1;
     this.status = 'in_hand';
     this.hand.start(seed);
     this.emit();
+  }
+
+  /**
+   * Continue from an active 存档 snapshot (recovery source).
+   * Does not re-invoke DecisionProvider.
+   */
+  restoreFromSave(save: ActiveSave): void {
+    this.matchSeed = save.match.matchSeed >>> 0;
+    this.handIndex = save.match.handIndex;
+    this.status = save.match.status;
+    this.hand.restore({
+      state: save.handState,
+      status: save.sessionStatus,
+      seed: save.handState.seed,
+      selectedTileId: save.selectedTileId,
+      actionLog: save.actionLog,
+    });
+    this.emit();
+  }
+
+  /** Build the persistence payload for the current in-progress match. */
+  toActiveSave(): ActiveSave | null {
+    const hand = this.hand.snapshot();
+    if (this.status === 'menu' || !hand.state || this.matchSeed === null) {
+      return null;
+    }
+    return {
+      schemaVersion: 1,
+      kind: 'active_save',
+      savedAt: Date.now(),
+      match: {
+        status: this.status,
+        handIndex: this.handIndex,
+        matchSeed: this.matchSeed,
+      },
+      sessionStatus: hand.status,
+      handState: structuredClone(hand.state) as HandState,
+      selectedTileId: hand.selectedTileId,
+      actionLog: structuredClone(this.hand.getActionLog() as Command[]),
+    };
+  }
+
+  /** Archive metadata helpers for ending a match. */
+  archiveMeta(): {
+    matchSeed: number;
+    handCount: number;
+    actionLog: readonly Command[];
+    finalHandState: HandState | null;
+    sessionStatus: SessionStatus;
+  } | null {
+    if (this.matchSeed === null) return null;
+    const hand = this.hand.snapshot();
+    return {
+      matchSeed: this.matchSeed,
+      handCount: this.handIndex,
+      actionLog: this.hand.getActionLog(),
+      finalHandState: hand.state,
+      sessionStatus: hand.status,
+    };
   }
 
   /** After settlement: deal the next hand with dealer continuity rules. */

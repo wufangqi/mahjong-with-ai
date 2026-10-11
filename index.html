@@ -37,14 +37,31 @@
   <div id="main-menu" data-testid="main-menu">
     <div class="main-menu-inner">
       <h2>主菜单</h2>
-      <p class="menu-blurb">开始一场本地对局。第一局随机庄；结算后可下一局或结束。无总分、无筹码。</p>
+      <p class="menu-blurb">开始一场本地对局。第一局随机庄；结算后可下一局或结束。无总分、无筹码。每个完成动作后自动保存，可继续最近一场。</p>
       <label class="seed-field menu-seed">
         <span>种子</span>
         <input id="seed" data-testid="seed-input" type="number" value="42" />
       </label>
+      <button id="continue-match" data-testid="continue-match" type="button" hidden>继续最近一场</button>
       <button id="start-match" data-testid="start-match" type="button">开始一场</button>
       <!-- Compat alias for older e2e / harnesses -->
       <button id="start" data-testid="start-hand" type="button" class="sr-only" tabindex="-1">开始一场</button>
+      <div id="save-notice" data-testid="save-notice" class="save-notice" hidden>
+        <p id="save-notice-text" data-testid="save-notice-text"></p>
+        <div class="menu-secondary">
+          <button id="export-incompatible" data-testid="export-incompatible" type="button">导出旧存档</button>
+          <button id="dismiss-incompatible" data-testid="dismiss-incompatible" type="button">知道了</button>
+        </div>
+      </div>
+      <div class="menu-secondary">
+        <button id="export-data" data-testid="export-data" type="button">导出本地数据</button>
+        <button id="clear-data" data-testid="clear-data" type="button">清除本地数据</button>
+      </div>
+      <label class="dev-replay-field">
+        <span>开发者回放（粘贴动作日志 JSON）</span>
+        <textarea id="replay-log-input" data-testid="replay-log-input" rows="3" placeholder='[{"type":"StartHand","seed":42}, …]'></textarea>
+      </label>
+      <button id="dev-replay" data-testid="dev-replay" type="button">开发者回放</button>
     </div>
   </div>
 

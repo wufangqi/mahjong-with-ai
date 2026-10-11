@@ -273,6 +273,116 @@ test('quality tiers control DPR/shadows/bloom/particles/sky and manual locks aut
   expect(['gpu', 'cpu']).toContain(ambient.backend);
 });
 
+test('continues the latest save after reload and clears it on end', async ({ page }) => {
+  await page.goto('./');
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+
+  await page.getByTestId('seed-input').fill('42');
+  await page.getByTestId('start-match').click();
+
+  const before = await page.evaluate(async () => {
+    const snap = window.__play!.snapshot();
+    const drawn = snap.state!.seats[0].drawn!;
+    window.__play!.clickTile(drawn.id);
+    window.__play!.clickTile(drawn.id);
+    await window.__play!.waitPersist();
+    return {
+      rngState: window.__play!.snapshot().state!.rngState,
+      riverTail: window.__play!.snapshot().state!.seats[0].river.at(-1)?.id ?? null,
+      logLen: window.__play!.actionLog().length,
+    };
+  });
+  expect(before.riverTail).toBeTruthy();
+  expect(before.logLen).toBeGreaterThan(1);
+
+  await page.reload();
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+  await expect(page.getByTestId('continue-match')).toBeVisible();
+
+  await page.getByTestId('continue-match').click();
+  const after = await page.evaluate(() => ({
+    rngState: window.__play!.snapshot().state!.rngState,
+    riverTail: window.__play!.snapshot().state!.seats[0].river.at(-1)?.id ?? null,
+    matchStatus: window.__play!.matchSnapshot().status,
+  }));
+  expect(after.matchStatus).toBe('in_hand');
+  expect(after.rngState).toBe(before.rngState);
+  expect(after.riverTail).toBe(before.riverTail);
+
+  await page.evaluate(() => window.__play!.autoPlayToDraw());
+  await page.getByTestId('end-match').click();
+  await page.evaluate(async () => {
+    await window.__play!.waitPersist();
+    await window.__play!.refreshPersistMenu();
+  });
+  await expect(page.getByTestId('main-menu')).toBeVisible();
+  await expect(page.getByTestId('continue-match')).toBeHidden();
+});
+
+test('developer replay uses recorded actions without calling external AI', async ({ page }) => {
+  await page.goto('./');
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+
+  await page.getByTestId('seed-input').fill('42');
+  await page.getByTestId('start-match').click();
+  const log = await page.evaluate(async () => {
+    window.__play!.autoPlayToDraw();
+    await window.__play!.waitPersist();
+    return window.__play!.actionLog();
+  });
+  expect(log.length).toBeGreaterThan(1);
+
+  await page.getByTestId('end-match').click();
+  await page.evaluate(async () => {
+    await window.__play!.waitPersist();
+  });
+
+  await page.evaluate((commands) => {
+    window.__play!.replayActionLog(commands);
+  }, log);
+
+  const replayed = await page.evaluate(() => ({
+    phase: window.__play!.snapshot().state!.phase,
+    wall: window.__play!.snapshot().state!.wall.length,
+    logLen: window.__play!.actionLog().length,
+  }));
+  expect(replayed.phase).toBe('exhaustive_draw');
+  expect(replayed.wall).toBe(0);
+  expect(replayed.logLen).toBe(log.length);
+});
+
+test('refuses incompatible saves visibly and still allows export', async ({ page }) => {
+  await page.goto('./');
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+
+  await page.evaluate(async () => {
+    const openReq = indexedDB.open('mahjong-with-ai', 1);
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      openReq.onupgradeneeded = () => {
+        const database = openReq.result;
+        if (!database.objectStoreNames.contains('kv')) database.createObjectStore('kv');
+      };
+      openReq.onsuccess = () => resolve(openReq.result);
+      openReq.onerror = () => reject(openReq.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put({ schemaVersion: 0, kind: 'active_save', broken: true }, 'activeSave');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+    await window.__play!.refreshPersistMenu();
+  });
+
+  await expect(page.getByTestId('save-notice')).toBeVisible();
+  await expect(page.getByTestId('save-notice-text')).toContainText('无可用迁移器');
+  await expect(page.getByTestId('continue-match')).toBeHidden();
+
+  const exported = await page.evaluate(async () => JSON.parse(await window.__play!.exportJson()));
+  expect(exported.incompatibleActiveRaw?.schemaVersion).toBe(0);
+});
+
 test('auto quality downgrades one tier after sustained low fps', async ({ page }) => {
   await page.goto('./');
   await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });

@@ -1,12 +1,18 @@
-import { FULL_SET_SIZE, PLAYER_SEAT, totalTileCount, type Seat } from '../core';
+import { FULL_SET_SIZE, PLAYER_SEAT, totalTileCount, type Command, type Seat } from '../core';
 import { MatchSession } from '../game/match';
+import { PersistStore, replayCommands, type ActiveSave, type LoggedCommand } from '../persist';
 import { probeFromRenderer } from '../particles/probe';
 import { QualityController } from '../quality/qualityController';
-import { isQualityTier, type QualityTier } from '../quality/types';
+import {
+  isQualityTier,
+  QUALITY_MODE_STORAGE_KEY,
+  QUALITY_STORAGE_KEY,
+  type QualityTier,
+} from '../quality/types';
 import { listThemeOptions, loadTheme } from '../theme/catalog';
 import { ThemeManager } from '../theme/themeManager';
 import { isThemeId } from '../theme/schema';
-import type { ThemeId } from '../theme/types';
+import { THEME_STORAGE_KEY, type ThemeId } from '../theme/types';
 import { TableView } from './tableView';
 import { formatTileCodes } from './tileLabels';
 import { patternLabels, WinSceneScheduler, type WinScenePlan } from './winPresentation';
@@ -56,7 +62,16 @@ export function bootPlayApp(): void {
   const hud = mustEl<HTMLElement>('hud');
   const handIndexEl = mustEl<HTMLElement>('hand-index');
   const startMatchBtn = mustEl<HTMLButtonElement>('start-match');
+  const continueMatchBtn = mustEl<HTMLButtonElement>('continue-match');
   const startBtn = mustEl<HTMLButtonElement>('start');
+  const saveNotice = mustEl<HTMLElement>('save-notice');
+  const saveNoticeText = mustEl<HTMLElement>('save-notice-text');
+  const exportIncompatibleBtn = mustEl<HTMLButtonElement>('export-incompatible');
+  const dismissIncompatibleBtn = mustEl<HTMLButtonElement>('dismiss-incompatible');
+  const exportDataBtn = mustEl<HTMLButtonElement>('export-data');
+  const clearDataBtn = mustEl<HTMLButtonElement>('clear-data');
+  const replayLogInput = mustEl<HTMLTextAreaElement>('replay-log-input');
+  const devReplayBtn = mustEl<HTMLButtonElement>('dev-replay');
   const themeSelect = mustEl<HTMLSelectElement>('theme-select');
   const qualitySelect = mustEl<HTMLSelectElement>('quality-select');
   const themeNotice = mustEl<HTMLElement>('theme-notice');
@@ -89,6 +104,10 @@ export function bootPlayApp(): void {
   const table = new TableView(canvas);
   const scenes = new WinSceneScheduler();
   const storage = browserStorage();
+  const persist = new PersistStore();
+  let cachedActiveSave: ActiveSave | null = null;
+  let persistChain: Promise<void> = Promise.resolve();
+  let incompatibleReason: string | null = null;
   const themes = new ThemeManager({
     storage,
     now: () => performance.now(),
@@ -380,7 +399,60 @@ export function bootPlayApp(): void {
     renderWinPanel();
   };
 
-  match.subscribe(refresh);
+  const syncMenuPersistUi = (): void => {
+    continueMatchBtn.hidden = cachedActiveSave === null;
+    if (incompatibleReason) {
+      saveNotice.hidden = false;
+      saveNoticeText.textContent = `无法加载旧存档：${incompatibleReason}。可导出后重新开始。`;
+    } else {
+      saveNotice.hidden = true;
+      saveNoticeText.textContent = '';
+    }
+  };
+
+  const queuePersist = (): void => {
+    persistChain = persistChain
+      .then(async () => {
+        const save = match.toActiveSave();
+        if (!save) return;
+        cachedActiveSave = await persist.saveActive(save);
+      })
+      .catch((err) => {
+        console.error('persist save failed', err);
+      });
+  };
+
+  const downloadText = (filename: string, text: string): void => {
+    const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const refreshPersistMenu = async (): Promise<void> => {
+    const loaded = await persist.loadActive();
+    if (loaded.status === 'ok') {
+      cachedActiveSave = loaded.save;
+      incompatibleReason = null;
+    } else if (loaded.status === 'incompatible') {
+      cachedActiveSave = null;
+      incompatibleReason = loaded.reason;
+    } else {
+      cachedActiveSave = null;
+      incompatibleReason = null;
+    }
+    syncMenuPersistUi();
+  };
+
+  match.subscribe(() => {
+    refresh();
+    if (match.snapshot().status !== 'menu') {
+      queuePersist();
+    }
+  });
 
   themeSelect.addEventListener('change', () => {
     const next = themeSelect.value;
@@ -406,7 +478,25 @@ export function bootPlayApp(): void {
       syncQualityChrome();
     }
     quality.beginGame();
+    cachedActiveSave = null;
+    incompatibleReason = null;
+    syncMenuPersistUi();
     match.startMatch(seed);
+  };
+
+  const continueMatch = (): void => {
+    if (!cachedActiveSave) return;
+    lastHandWonEventCount = 0;
+    quality.endGame();
+    if (quality.getMode() === 'auto') {
+      quality.selectInitial(gpuProbe, fpsEma);
+      applyQualityToTable();
+      syncQualityChrome();
+    }
+    quality.beginGame();
+    match.restoreFromSave(cachedActiveSave);
+    const seed = cachedActiveSave.handState.seed;
+    seedInput.value = String(seed);
   };
 
   const onStartMatchClick = (): void => {
@@ -421,6 +511,7 @@ export function bootPlayApp(): void {
 
   startMatchBtn.addEventListener('click', onStartMatchClick);
   startBtn.addEventListener('click', onStartMatchClick);
+  continueMatchBtn.addEventListener('click', () => continueMatch());
 
   claimWinBtn.addEventListener('click', () => session.claimWin());
   claimKongBtn.addEventListener('click', () => session.claimKong());
@@ -438,12 +529,112 @@ export function bootPlayApp(): void {
   const endCurrentMatch = (): void => {
     lastHandWonEventCount = 0;
     quality.endGame();
+    const meta = match.archiveMeta();
+    cachedActiveSave = null;
+    incompatibleReason = null;
+    syncMenuPersistUi();
+    persistChain = persistChain
+      .then(async () => {
+        if (meta && meta.actionLog.length > 0) {
+          await persist.archiveGameLog({
+            matchSeed: meta.matchSeed,
+            handCount: meta.handCount,
+            actionLog: [...meta.actionLog],
+            finalHandState: meta.finalHandState,
+          });
+        }
+        await persist.clearActive();
+      })
+      .catch((err) => console.error('persist end failed', err));
     match.endMatch();
     table.sync(null, null);
   };
   endMatchDrawBtn.addEventListener('click', endCurrentMatch);
   endMatchWinBtn.addEventListener('click', endCurrentMatch);
   replaySceneBtn.addEventListener('click', () => scenes.replay());
+
+  exportDataBtn.addEventListener('click', () => {
+    void persist.exportJson().then((json) => {
+      downloadText(`mahjong-export-${Date.now()}.json`, json);
+    });
+  });
+
+  exportIncompatibleBtn.addEventListener('click', () => {
+    void persist.exportJson().then((json) => {
+      downloadText(`mahjong-incompatible-save-${Date.now()}.json`, json);
+    });
+  });
+
+  dismissIncompatibleBtn.addEventListener('click', () => {
+    incompatibleReason = null;
+    syncMenuPersistUi();
+  });
+
+  clearDataBtn.addEventListener('click', () => {
+    const ok = window.confirm('清除本地存档、动作日志、主题与画质设置？此操作不可撤销。');
+    if (!ok) return;
+    void (async () => {
+      await persist.clearAllGameData();
+      storage.removeItem(THEME_STORAGE_KEY);
+      storage.removeItem(QUALITY_STORAGE_KEY);
+      storage.removeItem(QUALITY_MODE_STORAGE_KEY);
+      cachedActiveSave = null;
+      incompatibleReason = null;
+      syncMenuPersistUi();
+      await themes.select('classic-green');
+      applyActiveTheme();
+      quality.setAuto();
+      quality.selectInitial(gpuProbe, fpsEma);
+      applyQualityToTable();
+      syncQualityChrome();
+    })();
+  });
+
+  const runDevReplay = (commands: LoggedCommand[]): void => {
+    const result = replayCommands(commands);
+    lastHandWonEventCount = 0;
+    quality.endGame();
+    quality.beginGame();
+    const status =
+      result.state.phase === 'exhaustive_draw'
+        ? ('exhaustive_draw' as const)
+        : result.state.phase === 'hand_won'
+          ? ('hand_won' as const)
+          : result.state.phase === 'awaiting_win_response'
+            ? ('awaiting_player_win_response' as const)
+            : result.state.phase === 'awaiting_claim_response'
+              ? ('awaiting_player_claim_response' as const)
+              : result.state.phase === 'awaiting_discard' && result.state.turn === PLAYER_SEAT
+                ? ('awaiting_player_discard' as const)
+                : ('idle' as const);
+    match.restoreFromSave({
+      schemaVersion: 1,
+      kind: 'active_save',
+      savedAt: Date.now(),
+      match: {
+        status:
+          status === 'exhaustive_draw' || status === 'hand_won' ? 'hand_settled' : 'in_hand',
+        handIndex: Math.max(1, commands.filter((c) => c.type === 'StartHand').length),
+        matchSeed: result.state.seed,
+      },
+      sessionStatus: status,
+      handState: result.state,
+      selectedTileId: null,
+      actionLog: commands,
+    });
+    seedInput.value = String(result.state.seed);
+  };
+
+  devReplayBtn.addEventListener('click', () => {
+    try {
+      const parsed = JSON.parse(replayLogInput.value) as unknown;
+      const commands = extractActionLog(parsed);
+      runDevReplay(commands);
+    } catch (err) {
+      statusEl.hidden = false;
+      statusEl.textContent = `回放失败：${err instanceof Error ? err.message : String(err)}`;
+    }
+  });
 
   let pointerDownAt: { x: number; y: number; tileId: string } | null = null;
   let dragging = false;
@@ -530,11 +721,32 @@ export function bootPlayApp(): void {
     startMatch: (seed: number) => {
       startNewMatch(seed);
     },
+    continueMatch: () => {
+      continueMatch();
+    },
     endMatch: () => {
       endCurrentMatch();
     },
     matchSnapshot: () => match.snapshot(),
     snapshot: () => session.snapshot(),
+    actionLog: () => [...session.getActionLog()],
+    exportJson: () => persist.exportJson(),
+    clearLocalData: async () => {
+      await persist.clearAllGameData();
+      storage.removeItem(THEME_STORAGE_KEY);
+      storage.removeItem(QUALITY_STORAGE_KEY);
+      storage.removeItem(QUALITY_MODE_STORAGE_KEY);
+      cachedActiveSave = null;
+      incompatibleReason = null;
+      syncMenuPersistUi();
+    },
+    refreshPersistMenu: () => refreshPersistMenu(),
+    hasContinue: () => cachedActiveSave !== null,
+    incompatibleReason: () => incompatibleReason,
+    replayActionLog: (commands: Command[]) => {
+      runDevReplay(commands);
+    },
+    waitPersist: () => persistChain,
     clickTile: (tileId: string) => session.clickTile(tileId),
     discardByDrag: (tileId: string) => session.discardByDrag(tileId),
     autoPlayToDraw: () => session.autoPlayPlayerFirstLegal(),
@@ -617,9 +829,31 @@ export function bootPlayApp(): void {
     }
     applyQualityToTable();
     syncQualityChrome();
+    await refreshPersistMenu();
     showMenu();
     document.body.classList.add('ready');
     if (window.__play) window.__play.ready = true;
     refresh();
   });
+}
+
+function extractActionLog(parsed: unknown): LoggedCommand[] {
+  if (Array.isArray(parsed)) {
+    return parsed as LoggedCommand[];
+  }
+  if (parsed && typeof parsed === 'object') {
+    const obj = parsed as {
+      actionLog?: LoggedCommand[];
+      activeSave?: { actionLog?: LoggedCommand[] };
+      gameLogs?: { actionLog?: LoggedCommand[] }[];
+    };
+    if (Array.isArray(obj.actionLog)) return obj.actionLog;
+    if (obj.activeSave && Array.isArray(obj.activeSave.actionLog)) {
+      return obj.activeSave.actionLog;
+    }
+    if (Array.isArray(obj.gameLogs) && obj.gameLogs[0] && Array.isArray(obj.gameLogs[0].actionLog)) {
+      return obj.gameLogs[0].actionLog;
+    }
+  }
+  throw new Error('需要动作日志数组，或含 actionLog 的导出包');
 }

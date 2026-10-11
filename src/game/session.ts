@@ -17,6 +17,7 @@ import {
   nextDealerAfterWin,
   PLAYER_SEAT,
   type ChowOption,
+  type Command,
   type DomainEvent,
   type ExhaustiveDrawSettlement,
   type HandState,
@@ -61,6 +62,8 @@ export class PlaySession {
   private selectedTileId: string | null = null;
   private events: DomainEvent[] = [];
   private seed: number | null = null;
+  /** Final legal commands applied this match (player + AI); used for 存档 / replay. */
+  private actionLog: Command[] = [];
   private listeners = new Set<() => void>();
   /** When true, AI always passes meld claims (used by autoplay 流局 demos). */
   private passClaims = false;
@@ -79,9 +82,46 @@ export class PlaySession {
     this.selectedTileId = null;
     this.events = [];
     this.seed = null;
+    this.actionLog = [];
     this.passClaims = false;
     this.forcePassWins = false;
     this.emit();
+  }
+
+  getActionLog(): readonly Command[] {
+    return this.actionLog;
+  }
+
+  /**
+   * Restore a persisted hand without re-running AI (continue 存档).
+   * Caller must supply a stable post-action status.
+   */
+  restore(input: {
+    state: HandState;
+    status: SessionStatus;
+    seed: number;
+    selectedTileId?: string | null;
+    actionLog?: readonly Command[];
+    events?: readonly DomainEvent[];
+  }): void {
+    this.state = structuredClone(input.state);
+    this.status = input.status;
+    this.seed = input.seed >>> 0;
+    this.selectedTileId = input.selectedTileId ?? null;
+    this.actionLog = input.actionLog ? structuredClone(input.actionLog as Command[]) : [];
+    this.events = input.events ? structuredClone(input.events as DomainEvent[]) : [];
+    this.passClaims = false;
+    this.forcePassWins = false;
+    this.emit();
+  }
+
+  /** Apply a core command, append to the action log, and return domain events. */
+  private commit(command: Command): DomainEvent[] {
+    const result = applyCommand(this.state, command);
+    this.state = result.state;
+    this.events.push(...result.events);
+    this.actionLog.push(structuredClone(command));
+    return result.events;
   }
 
   subscribe(listener: () => void): () => void {
@@ -128,14 +168,22 @@ export class PlaySession {
   }
 
   start(seed: number, dealer?: Seat): void {
-    const started = applyCommand(null, {
+    const command: Command = {
       type: 'StartHand',
-      seed,
+      seed: seed >>> 0,
       ...(dealer !== undefined ? { dealer } : {}),
-    });
+    };
+    const started = applyCommand(null, command);
     this.seed = seed >>> 0;
     this.state = started.state;
     this.events = [...started.events];
+    // Log the same StartHand shape used at runtime: omit dealer when it was
+    // rolled from the seed so replay consumes the same RNG draw.
+    this.actionLog.push(
+      dealer !== undefined
+        ? { type: 'StartHand', seed: seed >>> 0, dealer }
+        : { type: 'StartHand', seed: seed >>> 0 },
+    );
     this.selectedTileId = null;
     this.passClaims = false;
     this.forcePassWins = false;
@@ -195,9 +243,7 @@ export class PlaySession {
         }
         const tileCode = this.state.responseWindow.tile.code;
         if (this.forcePassWins || !canWinOnDiscard(this.state, PLAYER_SEAT, tileCode)) {
-          const result = applyCommand(this.state, { type: 'Pass', seat: PLAYER_SEAT });
-          this.state = result.state;
-          this.events.push(...result.events);
+          this.commit({ type: 'Pass', seat: PLAYER_SEAT });
           continue;
         }
         this.status = 'awaiting_player_win_response';
@@ -306,46 +352,39 @@ export class PlaySession {
       throw new Error(`AI returned illegal action for seat ${seat}: ${action.type}`);
     }
 
-    let result;
     switch (action.type) {
       case 'Discard':
-        result = applyCommand(this.state, { type: 'Discard', seat, tileId: action.tileId });
+        this.commit({ type: 'Discard', seat, tileId: action.tileId });
         break;
       case 'DeclareWin':
-        result = applyCommand(this.state, { type: 'DeclareWin', seat });
+        this.commit({ type: 'DeclareWin', seat });
         break;
       case 'DeclareConcealedKong':
-        result = applyCommand(this.state, {
-          type: 'DeclareConcealedKong',
-          seat,
-          code: action.code,
-        });
+        this.commit({ type: 'DeclareConcealedKong', seat, code: action.code });
         break;
       case 'DeclareAddedKong':
-        result = applyCommand(this.state, { type: 'DeclareAddedKong', seat, code: action.code });
+        this.commit({ type: 'DeclareAddedKong', seat, code: action.code });
         break;
       case 'ClaimWin':
-        result = applyCommand(this.state, { type: 'ClaimWin', seat });
+        this.commit({ type: 'ClaimWin', seat });
         break;
       case 'ClaimKong':
-        result = applyCommand(this.state, { type: 'ClaimKong', seat });
+        this.commit({ type: 'ClaimKong', seat });
         break;
       case 'ClaimPung':
-        result = applyCommand(this.state, { type: 'ClaimPung', seat });
+        this.commit({ type: 'ClaimPung', seat });
         break;
       case 'ClaimChow':
-        result = applyCommand(this.state, { type: 'ClaimChow', seat, tileIds: action.tileIds });
+        this.commit({ type: 'ClaimChow', seat, tileIds: action.tileIds });
         break;
       case 'Pass':
-        result = applyCommand(this.state, { type: 'Pass', seat });
+        this.commit({ type: 'Pass', seat });
         break;
       default: {
         const _exhaustive: never = action;
         throw new Error(`unhandled AI action ${JSON.stringify(_exhaustive)}`);
       }
     }
-    this.state = result.state;
-    this.events.push(...result.events);
   }
 
   selectTile(tileId: string): void {
@@ -380,13 +419,7 @@ export class PlaySession {
     const legal = legalDiscardTileIds(this.state, PLAYER_SEAT);
     if (!legal.includes(tileId)) return;
 
-    const result = applyCommand(this.state, {
-      type: 'Discard',
-      seat: PLAYER_SEAT,
-      tileId,
-    });
-    this.state = result.state;
-    this.events.push(...result.events);
+    this.commit({ type: 'Discard', seat: PLAYER_SEAT, tileId });
     this.selectedTileId = null;
     this.advance();
     this.emit();
@@ -396,9 +429,7 @@ export class PlaySession {
     if (!this.state) return;
 
     if (this.status === 'awaiting_player_discard' && canWinOnDraw(this.state, PLAYER_SEAT)) {
-      const result = applyCommand(this.state, { type: 'DeclareWin', seat: PLAYER_SEAT });
-      this.state = result.state;
-      this.events.push(...result.events);
+      this.commit({ type: 'DeclareWin', seat: PLAYER_SEAT });
       this.selectedTileId = null;
       this.advance();
       this.emit();
@@ -411,31 +442,21 @@ export class PlaySession {
     ) {
       return;
     }
-    const result = applyCommand(this.state, { type: 'ClaimWin', seat: PLAYER_SEAT });
-    this.state = result.state;
-    this.events.push(...result.events);
+    this.commit({ type: 'ClaimWin', seat: PLAYER_SEAT });
     this.advance();
     this.emit();
   }
 
   claimKong(): void {
     if (this.status !== 'awaiting_player_claim_response' || !this.state) return;
-    const result = applyCommand(this.state, { type: 'ClaimKong', seat: PLAYER_SEAT });
-    this.state = result.state;
-    this.events.push(...result.events);
+    this.commit({ type: 'ClaimKong', seat: PLAYER_SEAT });
     this.advance();
     this.emit();
   }
 
   declareConcealedKong(code: TileCode): void {
     if (this.status !== 'awaiting_player_discard' || !this.state) return;
-    const result = applyCommand(this.state, {
-      type: 'DeclareConcealedKong',
-      seat: PLAYER_SEAT,
-      code,
-    });
-    this.state = result.state;
-    this.events.push(...result.events);
+    this.commit({ type: 'DeclareConcealedKong', seat: PLAYER_SEAT, code });
     this.selectedTileId = null;
     this.advance();
     this.emit();
@@ -443,13 +464,7 @@ export class PlaySession {
 
   declareAddedKong(code: TileCode): void {
     if (this.status !== 'awaiting_player_discard' || !this.state) return;
-    const result = applyCommand(this.state, {
-      type: 'DeclareAddedKong',
-      seat: PLAYER_SEAT,
-      code,
-    });
-    this.state = result.state;
-    this.events.push(...result.events);
+    this.commit({ type: 'DeclareAddedKong', seat: PLAYER_SEAT, code });
     this.selectedTileId = null;
     this.advance();
     this.emit();
@@ -457,22 +472,14 @@ export class PlaySession {
 
   claimPung(): void {
     if (this.status !== 'awaiting_player_claim_response' || !this.state) return;
-    const result = applyCommand(this.state, { type: 'ClaimPung', seat: PLAYER_SEAT });
-    this.state = result.state;
-    this.events.push(...result.events);
+    this.commit({ type: 'ClaimPung', seat: PLAYER_SEAT });
     this.advance();
     this.emit();
   }
 
   claimChow(tileIds: [string, string]): void {
     if (this.status !== 'awaiting_player_claim_response' || !this.state) return;
-    const result = applyCommand(this.state, {
-      type: 'ClaimChow',
-      seat: PLAYER_SEAT,
-      tileIds,
-    });
-    this.state = result.state;
-    this.events.push(...result.events);
+    this.commit({ type: 'ClaimChow', seat: PLAYER_SEAT, tileIds });
     this.advance();
     this.emit();
   }
@@ -485,9 +492,7 @@ export class PlaySession {
     ) {
       return;
     }
-    const result = applyCommand(this.state, { type: 'Pass', seat: PLAYER_SEAT });
-    this.state = result.state;
-    this.events.push(...result.events);
+    this.commit({ type: 'Pass', seat: PLAYER_SEAT });
     this.advance();
     this.emit();
   }

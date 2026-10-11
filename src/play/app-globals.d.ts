@@ -1,3 +1,4 @@
+import type { Command } from '../core';
 import type { MatchSnapshot } from '../game/match';
 import type { PlaySessionSnapshot } from '../game/session';
 import type { GpuProbeInfo, QualityMode, QualitySettings, QualityTier } from '../quality/types';
@@ -10,9 +11,18 @@ declare global {
       ready: boolean;
       start: (seed: number) => void;
       startMatch: (seed: number) => void;
+      continueMatch: () => void;
       endMatch: () => void;
       matchSnapshot: () => MatchSnapshot;
       snapshot: () => PlaySessionSnapshot;
+      actionLog: () => Command[];
+      exportJson: () => Promise<string>;
+      clearLocalData: () => Promise<void>;
+      refreshPersistMenu: () => Promise<void>;
+      hasContinue: () => boolean;
+      incompatibleReason: () => string | null;
+      replayActionLog: (commands: Command[]) => void;
+      waitPersist: () => Promise<void>;
       clickTile: (tileId: string) => void;
       discardByDrag: (tileId: string) => void;
       autoPlayToDraw: () => void;
