@@ -27,8 +27,8 @@ npm run test:e2e -- e2e/budget.spec.ts
 
 ```bash
 npm run build
-# On a desktop with DISPLAY and DRM access (user in `render`/`video`):
-BUDGET_FPS_HEADED=1 npm run budget:fps
+npm run budget:dri    # ACL on /dev/dri when not in render/video group
+npm run budget:fps    # ANGLE/Vulkan → Intel UHD (not SwiftShader)
 ```
 
-Writes `budget-fps.json`. Headless / no-DRM agents often stay on SwiftShader — the report records that and skips the absolute gate.
+Writes `budget-fps.json`. Playwright e2e uses the same `CHROME_UHD_GPU_ARGS` so `fpsGateApplied` is true on UHD hosts.

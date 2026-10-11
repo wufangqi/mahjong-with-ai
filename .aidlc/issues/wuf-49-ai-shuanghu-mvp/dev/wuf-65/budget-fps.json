@@ -1,26 +1,28 @@
 {
-  "measuredAt": "2026-10-11T03:46:28.485Z",
+  "measuredAt": "2026-10-11T04:02:29.250Z",
   "viewport": {
     "width": 1920,
     "height": 1080
   },
-  "headed": true,
-  "gpuRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
-  "uhd620Class": false,
-  "midFpsSample": 4.095243666541212,
-  "topFpsSample": 4.149377593360996,
+  "chromeArgs": [
+    "--ignore-gpu-blocklist",
+    "--enable-webgl",
+    "--disable-software-rasterizer",
+    "--use-angle=vulkan",
+    "--enable-features=Vulkan",
+    "--disable-vulkan-surface",
+    "--enable-precise-memory-info",
+    "--disable-dev-shm-usage"
+  ],
+  "gpuRenderer": "ANGLE (Intel, Vulkan 1.4.318 (Intel(R) UHD Graphics 630 (CFL GT2) (0x00003E92)), Intel open-source Mesa driver)",
+  "uhd620Class": true,
+  "midFpsSample": 59.99200105508342,
+  "topFpsSample": 59.329378026376666,
   "topSceneTier": "top",
   "midFpsTarget": 60,
   "topFpsFloor": 30,
-  "midWithinBudget": false,
-  "topWithinBudget": false,
-  "note": "Absolute 60/30 gate applies only when gpuProbe reports UHD-class iGPU. Use BUDGET_FPS_HEADED=1 on a desktop with DISPLAY for hardware evidence; CI headless often stays on SwiftShader.",
-  "hostPciGpu": [
-    "00:02.0 VGA compatible controller: Intel Corporation CoffeeLake-S GT2 [UHD Graphics 630]"
-  ],
-  "browserGpuAccess": {
-    "devDri": "/dev/dri/renderD128 present",
-    "renderGroup": "not in video/render group \u2014 Chromium cannot bind Intel UHD; falls back to SwiftShader",
-    "uhd620ClassHost": true
-  }
+  "midWithinBudget": true,
+  "topWithinBudget": true,
+  "fpsGateApplied": true,
+  "note": "ANGLE/Vulkan path. Absolute 60/30 gate requires UHD-class gpuProbe (ensure-dri-acl.sh if render node is not writable)."
 }

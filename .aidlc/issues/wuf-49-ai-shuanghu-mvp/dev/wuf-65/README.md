@@ -5,6 +5,6 @@
 
 实现说明：`implement.md`  
 传输量报告：`budget-report.json`（`npm run budget:measure`）  
-运行时报告：`budget-runtime.json`（`e2e/budget.spec.ts` 全量 50/100/20）  
-硬件 FPS：`budget-fps.json`（`npm run budget:fps`）  
+运行时报告：`budget-runtime.json`（e2e 全量 soak + UHD FPS 门槛）  
+硬件 FPS：`budget-fps.json`（`npm run budget:fps`，ANGLE/Vulkan）  
 评审：`review.md`

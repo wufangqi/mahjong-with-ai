@@ -241,17 +241,19 @@ test('full 50/100/20 soak and UHD-class mid/top FPS leave runtime report', async
   expect(sceneGrowth).toBe(false);
   expect(gpuGrowth).toBe(false);
 
-  expect(midFps).toBeGreaterThan(0);
-  expect(topFps).toBeGreaterThan(0);
-
-  // Gate absolute FPS on UHD 620-class iGPU (this host is UHD 630 = same class).
-  if (uhdClass) {
+  const hostPciGpu = hostPciGpuLines();
+  const uhdHost = hostPciGpu.some((l) => /UHD Graphics/i.test(l));
+  // On UHD-class hosts, ANGLE/Vulkan must bind the iGPU (not SwiftShader) and hit AC floors.
+  if (uhdHost) {
+    expect(uhdClass).toBe(true);
     expect(midFps).toBeGreaterThanOrEqual(MID_GAMEPLAY_FPS_TARGET * 0.9);
     expect(topFps).toBeGreaterThanOrEqual(TOP_SCENE_FPS_FLOOR);
+  } else {
+    expect(midFps).toBeGreaterThan(0);
+    expect(topFps).toBeGreaterThan(0);
   }
 
   const drawCalls = await page.evaluate(() => window.__play!.drawCallCount());
-  const hostPciGpu = hostPciGpuLines();
   mkdirSync(dirname(aidlcReport), { recursive: true });
   writeFileSync(
     aidlcReport,
@@ -261,12 +263,12 @@ test('full 50/100/20 soak and UHD-class mid/top FPS leave runtime report', async
         gpuRenderer: probe.renderer,
         uhd620Class: uhdClass,
         hostPciGpu,
-        uhd620ClassHost: hostPciGpu.some((l) => /UHD Graphics/i.test(l)),
+        uhd620ClassHost: uhdHost,
         midFpsSample: midFps,
         topFpsSample: topFps,
         midFpsTarget: MID_GAMEPLAY_FPS_TARGET,
         topFpsFloor: TOP_SCENE_FPS_FLOOR,
-        fpsGateApplied: uhdClass,
+        fpsGateApplied: uhdHost && uhdClass,
         drawCalls,
         handSamples: handSamples.length,
         themeSwitchSamples: themeSamples.length,

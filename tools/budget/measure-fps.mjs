@@ -2,19 +2,19 @@
 /**
  * Mid/top FPS measurement for WUF-65 (UHD 620-class baseline).
  *
- * Tries hardware GL flags; under headless CI this often still lands on
- * SwiftShader — the report records `uhd620Class` and only fails the absolute
- * 60/30 gate when a UHD-class renderer is actually exposed.
+ * Uses ANGLE/Vulkan so Intel UHD binds instead of SwiftShader when /dev/dri
+ * is writable (see ensure-dri-acl.sh).
  *
  * Usage:
+ *   bash tools/budget/ensure-dri-acl.sh
  *   npm run build && npm run budget:fps
- *   BUDGET_FPS_URL=http://127.0.0.1:4173 npm run budget:fps
  */
 import { chromium } from '@playwright/test';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { CHROME_UHD_GPU_ARGS } from './chromeGpuArgs.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
@@ -25,7 +25,6 @@ const outPath = resolve(
 const baseURL = process.env.BUDGET_FPS_URL ?? 'http://127.0.0.1:4173';
 const MID_TARGET = 60;
 const TOP_FLOOR = 30;
-const headed = process.env.BUDGET_FPS_HEADED === '1' || Boolean(process.env.DISPLAY);
 
 function isUhd620Class(renderer) {
   const r = String(renderer).toLowerCase();
@@ -69,16 +68,8 @@ async function main() {
   await ensurePreview();
 
   const browser = await chromium.launch({
-    headless: !headed,
-    args: [
-      '--ignore-gpu-blocklist',
-      '--enable-webgl',
-      '--use-gl=egl',
-      '--enable-features=Vulkan',
-      '--disable-vulkan-surface',
-      '--enable-precise-memory-info',
-      '--disable-dev-shm-usage',
-    ],
+    headless: true,
+    args: CHROME_UHD_GPU_ARGS,
   });
 
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
@@ -115,7 +106,7 @@ async function main() {
   const payload = {
     measuredAt: new Date().toISOString(),
     viewport: { width: 1920, height: 1080 },
-    headed,
+    chromeArgs: CHROME_UHD_GPU_ARGS,
     gpuRenderer: probe.renderer,
     uhd620Class: uhdClass,
     midFpsSample: midFps,
@@ -125,7 +116,8 @@ async function main() {
     topFpsFloor: TOP_FLOOR,
     midWithinBudget: midFps >= MID_TARGET * 0.9,
     topWithinBudget: topFps >= TOP_FLOOR,
-    note: 'Absolute 60/30 gate applies only when gpuProbe reports UHD-class iGPU. Use BUDGET_FPS_HEADED=1 on a desktop with DISPLAY for hardware evidence; CI headless often stays on SwiftShader.',
+    fpsGateApplied: uhdClass,
+    note: 'ANGLE/Vulkan path. Absolute 60/30 gate requires UHD-class gpuProbe (ensure-dri-acl.sh if render node is not writable).',
   };
 
   mkdirSync(dirname(outPath), { recursive: true });
@@ -144,7 +136,7 @@ async function main() {
   console.log(JSON.stringify(payload, null, 2));
   console.log(`\nWrote ${outPath}`);
 
-  if (uhdClass && (!payload.midWithinBudget || !payload.topWithinBudget)) {
+  if (!uhdClass || !payload.midWithinBudget || !payload.topWithinBudget) {
     process.exitCode = 1;
   }
 }
