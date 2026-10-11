@@ -80,6 +80,8 @@ declare global {
         opts?: { maxBytesPerStep?: number; minDeltaBytes?: number },
       ) => boolean;
       playSceneDemo: (tier: SceneTier) => void;
+      gameplayCameraProfile: () => 'balanced';
+      gameplayCameraPosition: () => { x: number; y: number; z: number };
     };
   }
 }

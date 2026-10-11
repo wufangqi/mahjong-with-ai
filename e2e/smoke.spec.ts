@@ -144,11 +144,26 @@ test('平胡 claim plays basic scene and shows settlement with replay', async ({
   await expect(page.getByTestId('status')).toContainText('平胡');
   await expect(page.getByTestId('replay-seat-0')).toBeVisible();
 
+  const afterFocus = await page.evaluate(() => ({
+    profile: window.__play!.gameplayCameraProfile(),
+    position: window.__play!.gameplayCameraPosition(),
+  }));
+  expect(afterFocus.profile).toBe('balanced');
+  expect(afterFocus.position.y).toBeCloseTo(6.5, 1);
+  expect(afterFocus.position.z).toBeCloseTo(12.8, 1);
+
   await page.getByTestId('replay-scene').click();
   await expect(page.getByTestId('scene-bar')).toBeVisible();
   await expect(page.getByTestId('win-banner')).toHaveClass(/basic/);
   await page.evaluate(() => window.__play!.skipScene());
   await expect(page.getByTestId('win-panel')).toBeVisible();
+  const afterReplay = await page.evaluate(() => ({
+    profile: window.__play!.gameplayCameraProfile(),
+    position: window.__play!.gameplayCameraPosition(),
+  }));
+  expect(afterReplay.profile).toBe('balanced');
+  expect(afterReplay.position.y).toBeCloseTo(6.5, 1);
+  expect(afterReplay.position.z).toBeCloseTo(12.8, 1);
 });
 
 test('audio volumes and reduced motion persist; auto-skip is available', async ({ page }) => {

@@ -18,7 +18,9 @@ const CELL_H = 168;
 export type TileInstancePose = {
   code: TileCode;
   position: THREE.Vector3;
-  rotation: THREE.Euler;
+  /** World orientation; prefer quaternion composition over Euler yaw addition. */
+  quaternion: THREE.Quaternion;
+  /** Legacy face-swap; concealed hands must not rely on this — use back-facing pose instead. */
   faceDown?: boolean;
   selected?: boolean;
 };
@@ -205,7 +207,7 @@ export class TileInstanceBatch {
       const pose = poses[i]!;
       const idx = this.atlasIndex.get(pose.code) ?? 0;
       this.dummy.position.copy(pose.position);
-      this.dummy.rotation.copy(pose.rotation);
+      this.dummy.quaternion.copy(pose.quaternion);
       this.dummy.scale.set(1, 1, 1);
       this.dummy.updateMatrix();
       this.mesh.setMatrixAt(i, this.dummy.matrix);
@@ -238,7 +240,7 @@ export class TileInstanceBatch {
     const faceDownAttr = this.mesh.geometry.getAttribute('aFaceDown') as THREE.InstancedBufferAttribute;
     const idx = this.atlasIndex.get(pose.code) ?? 0;
     this.dummy.position.copy(pose.position);
-    this.dummy.rotation.copy(pose.rotation);
+    this.dummy.quaternion.copy(pose.quaternion);
     this.dummy.scale.set(1, 1, 1);
     this.dummy.updateMatrix();
     this.mesh.setMatrixAt(index, this.dummy.matrix);

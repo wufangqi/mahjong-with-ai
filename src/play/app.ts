@@ -1338,6 +1338,11 @@ export function bootPlayApp(opts: BootPlayAppOptions = {}): Promise<void> {
         1,
       );
     },
+    gameplayCameraProfile: () => table.gameplayCameraProfile(),
+    gameplayCameraPosition: () => {
+      const p = table.gameplayCameraPosition();
+      return { x: p.x, y: p.y, z: p.z };
+    },
   };
 
   return themes.start().then(async () => {

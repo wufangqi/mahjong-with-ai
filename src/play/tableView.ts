@@ -25,20 +25,21 @@ import { settingsForTier } from '../quality/presets';
 import { blendSkyColumn, rgbToHex } from '../theme/skyBlend';
 import type { ThemeModules } from '../theme/types';
 import { TileInstanceBatch, type TileInstancePose } from './tileBatch';
+import {
+  BALANCED_GAMEPLAY_CAMERA,
+  composeSeatWorldPose,
+  localOpponentConcealedRotation,
+  localPlayerHandRotation,
+  localPublicFaceUpRotation,
+  SEAT_YAW,
+} from './tilePoses';
 
 type PlayerHandSlot = {
   tileId: string;
   code: PhysicalTile['code'];
   instanceIndex: number;
   home: THREE.Vector3;
-  rotation: THREE.Euler;
-};
-
-const SEAT_YAW: Record<Seat, number> = {
-  0: 0,
-  1: -Math.PI / 2,
-  2: Math.PI,
-  3: Math.PI / 2,
+  quaternion: THREE.Quaternion;
 };
 
 export class TableView {
@@ -81,8 +82,16 @@ export class TableView {
   private composer: EffectComposer | null = null;
   private bloomPass: UnrealBloomPass | null = null;
   private lastThemeModules: ThemeModules | null = null;
-  private readonly camBase = new THREE.Vector3(0, 9.2, 11.5);
-  private readonly camLookBase = new THREE.Vector3(0, 0.2, 0.4);
+  private readonly camBase = new THREE.Vector3(
+    BALANCED_GAMEPLAY_CAMERA.position.x,
+    BALANCED_GAMEPLAY_CAMERA.position.y,
+    BALANCED_GAMEPLAY_CAMERA.position.z,
+  );
+  private readonly camLookBase = new THREE.Vector3(
+    BALANCED_GAMEPLAY_CAMERA.lookAt.x,
+    BALANCED_GAMEPLAY_CAMERA.lookAt.y,
+    BALANCED_GAMEPLAY_CAMERA.lookAt.z,
+  );
   private winFocusSeat: Seat | null = null;
   private winFocusStrength = 0;
   private winFocusStartedAt = 0;
@@ -255,6 +264,16 @@ export class TableView {
   /** Test/harness: current win-focus seat, if any. */
   winCameraFocusSeat(): Seat | null {
     return this.winFocusSeat;
+  }
+
+  /** Named gameplay camera profile currently used as the base framing. */
+  gameplayCameraProfile(): typeof BALANCED_GAMEPLAY_CAMERA.id {
+    return BALANCED_GAMEPLAY_CAMERA.id;
+  }
+
+  /** Test/harness: current camera eye (matches balanced base when focus is clear). */
+  gameplayCameraPosition(): THREE.Vector3 {
+    return this.camera.position.clone();
   }
 
   private seatFocusTarget(seat: Seat): THREE.Vector3 {
@@ -680,40 +699,31 @@ export class TableView {
       const x = (i - (n - 1) / 2) * (TILE_W + 0.04) + gap;
       const selected = tile.id === selectedTileId;
       const position = new THREE.Vector3(x, TILE_H / 2 + (selected ? 0.18 : 0.02), 4.2);
-      const rotation = new THREE.Euler(0, 0, 0);
+      const quaternion = localPlayerHandRotation();
       const instanceIndex = out.length;
-      out.push({ code: tile.code, position: position.clone(), rotation, selected });
+      out.push({ code: tile.code, position: position.clone(), quaternion, selected });
       this.playerHand.push({
         tileId: tile.id,
         code: tile.code,
         instanceIndex,
         home: position.clone(),
-        rotation,
+        quaternion,
       });
     });
   }
 
-  private seatWorldPose(
-    seat: Seat,
-    local: THREE.Vector3,
-    localRot: THREE.Euler,
-  ): { position: THREE.Vector3; rotation: THREE.Euler } {
-    const yaw = SEAT_YAW[seat];
-    const position = local.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-    const rotation = new THREE.Euler(localRot.x, localRot.y + yaw, localRot.z, localRot.order);
-    return { position, rotation };
-  }
-
   private collectOpponentPoses(seat: Seat, count: number, out: TileInstancePose[]): void {
+    // Presentation receives only the concealed count — never real opponent codes.
     for (let i = 0; i < count; i++) {
       const x = (i - (count - 1) / 2) * (TILE_W * 0.72);
       const local = new THREE.Vector3(x, TILE_D / 2 + 0.02, 4.05);
-      const { position, rotation } = this.seatWorldPose(
+      const { position, quaternion } = composeSeatWorldPose(
         seat,
         local,
-        new THREE.Euler(Math.PI / 2, 0, 0),
+        localOpponentConcealedRotation(),
       );
-      out.push({ code: 'P', position, rotation, faceDown: true });
+      // Atlas code is unused: upright pose shows the theme tile back toward center.
+      out.push({ code: 'P', position, quaternion });
     }
   }
 
@@ -726,12 +736,12 @@ export class TableView {
         TILE_D / 2 + 0.01,
         1.35 + row * (TILE_H * 0.55),
       );
-      const { position, rotation } = this.seatWorldPose(
+      const { position, quaternion } = composeSeatWorldPose(
         seat,
         local,
-        new THREE.Euler(-Math.PI / 2, 0, 0),
+        localPublicFaceUpRotation(),
       );
-      out.push({ code: tile.code, position, rotation });
+      out.push({ code: tile.code, position, quaternion });
     });
   }
 
@@ -748,15 +758,15 @@ export class TableView {
           TILE_D / 2 + 0.01,
           3.35,
         );
-        const { position, rotation } = this.seatWorldPose(
+        const { position, quaternion } = composeSeatWorldPose(
           seat,
           local,
-          new THREE.Euler(-Math.PI / 2, 0, 0),
+          localPublicFaceUpRotation(),
         );
         out.push({
           code: tile.code,
           position,
-          rotation,
+          quaternion,
           selected: tile.id === meld.claimedTileId,
         });
       });
@@ -799,7 +809,7 @@ export class TableView {
     this.batch.setInstancePose(this.dragInstanceIndex, {
       code: slot.code,
       position: new THREE.Vector3(target.x, 0.35, target.z),
-      rotation: slot.rotation,
+      quaternion: slot.quaternion,
       selected: true,
     });
   }
@@ -813,7 +823,7 @@ export class TableView {
       this.batch.setInstancePose(slot.instanceIndex, {
         code: slot.code,
         position: this.dragOrigin.clone(),
-        rotation: slot.rotation,
+        quaternion: slot.quaternion,
         selected: true,
       });
     }
