@@ -67,6 +67,10 @@ declare global {
       endQualityGame: () => void;
       injectFpsSample: (dtMs: number, fps: number) => QualityTier | null;
       gpuProbe: () => GpuProbeInfo;
+      drawCallCount: () => number;
+      sampleFps: (ms?: number) => Promise<number>;
+      heapUsed: () => number | null;
+      hasSustainedGrowth: (samples: number[]) => boolean;
     };
   }
 }

@@ -5,7 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>AI 爽胡麻将 · 连续多局</title>
 </head>
-<body class="play menu" data-theme="classic-green">
+<body class="play menu loading" data-theme="classic-green">
+  <div id="boot-loading" data-testid="boot-loading" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="加载进度">
+    <div class="boot-loading-inner">
+      <p id="boot-loading-label" data-testid="boot-loading-label">加载字体</p>
+      <div class="boot-loading-track">
+        <div id="boot-loading-bar" data-testid="boot-loading-bar"></div>
+      </div>
+    </div>
+  </div>
   <canvas id="c" data-testid="table-canvas"></canvas>
   <div id="banner" data-testid="win-banner" aria-hidden="true">
     <div id="banner-main" class="main">胡</div>

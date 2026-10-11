@@ -13,13 +13,15 @@
     "test:e2e": "playwright test",
     "test:visual": "playwright test e2e/visual.spec.ts",
     "test:visual:update": "node -e \"if(process.env.UPDATE_VISUAL_BASELINES!=='1'){console.error('Refusing baseline update without UPDATE_VISUAL_BASELINES=1 (human confirmation)');process.exit(1)}\" && playwright test e2e/visual.spec.ts --update-snapshots",
-    "ci": "npm run typecheck && npm run test && npm run build && npm run test:e2e"
+    "budget:measure": "node tools/budget/measure.mjs",
+    "ci": "npm run typecheck && npm run test && npm run build && npm run budget:measure && npm run test:e2e"
   },
   "dependencies": {
     "three": "0.160.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",
+    "@types/node": "^26.6.5",
     "@types/three": "0.160.0",
     "jsdom": "^25.0.1",
     "typescript": "^5.7.2",

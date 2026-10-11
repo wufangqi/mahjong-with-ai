@@ -34,11 +34,16 @@ import { listThemeOptions, loadTheme } from '../theme/catalog';
 import { ThemeManager } from '../theme/themeManager';
 import { isThemeId } from '../theme/schema';
 import { THEME_STORAGE_KEY, type ThemeId } from '../theme/types';
+import { hasSustainedGrowth, type LoadStageId } from '../budget';
 import { TableView } from './tableView';
 import { formatTileCodes } from './tileLabels';
 import { patternLabels, WinSceneScheduler, type WinScenePlan } from './winPresentation';
 
 const AUTO_SKIP_STORAGE_KEY = 'mahjong.scene.autoSkipOpponent';
+
+export type BootPlayAppOptions = {
+  onStage?: (stage: LoadStageId) => void;
+};
 
 function mustEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -88,7 +93,8 @@ function browserSessionStorage(): Storage {
   }
 }
 
-export function bootPlayApp(): void {
+export function bootPlayApp(opts: BootPlayAppOptions = {}): Promise<void> {
+  const onStage = opts.onStage;
   const canvas = mustEl<HTMLCanvasElement>('c');
   const seedInput = mustEl<HTMLInputElement>('seed');
   const statusEl = mustEl<HTMLElement>('status');
@@ -1185,10 +1191,32 @@ export function bootPlayApp(): void {
       return changed;
     },
     gpuProbe: () => ({ ...gpuProbe }),
+    drawCallCount: () => table.drawCallCount(),
+    sampleFps: (ms = 500) =>
+      new Promise<number>((resolve) => {
+        let frames = 0;
+        const start = performance.now();
+        const tick = (now: number): void => {
+          frames += 1;
+          if (now - start >= ms) {
+            resolve((frames * 1000) / Math.max(1, now - start));
+            return;
+          }
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }),
+    heapUsed: () => {
+      const perf = performance as Performance & { memory?: { usedJSHeapSize: number } };
+      return perf.memory?.usedJSHeapSize ?? null;
+    },
+    hasSustainedGrowth: (samples: number[]) => hasSustainedGrowth(samples),
   };
 
-  void themes.start().then(async () => {
+  return themes.start().then(async () => {
+    onStage?.('default-theme');
     applyActiveTheme();
+    onStage?.('renderer');
     const measured = await measureInitialFps();
     if (quality.getMode() === 'auto') {
       quality.selectInitial(gpuProbe, measured);
@@ -1199,6 +1227,7 @@ export function bootPlayApp(): void {
     syncMotionChrome();
     await refreshPersistMenu();
     showMenu();
+    onStage?.('menu');
     document.body.classList.add('ready');
     if (window.__play) window.__play.ready = true;
     refresh();

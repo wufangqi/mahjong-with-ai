@@ -1,0 +1,10 @@
+{
+  "measuredAt": "2026-10-11T03:29:27.571Z",
+  "midFpsSample": 6.650410108623366,
+  "drawCalls": 1,
+  "themeSwitchSamples": 20,
+  "sceneReplaySamples": 20,
+  "themeSustainedGrowth": false,
+  "sceneSustainedGrowth": false,
+  "note": "Full AC soak is 50 hands / 100 scenes / 20 theme switches; e2e uses a shorter proportional soak plus unit-tested growth detector. FPS target 60/30 is for UHD 620-class hosts — CI records the sample only."
+}
