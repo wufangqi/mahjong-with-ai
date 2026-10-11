@@ -149,6 +149,28 @@ export class TableView {
     return this.lastDrawCalls;
   }
 
+  /**
+   * Rebuild GPU-bound presentation resources after `webglcontextrestored`.
+   * Three.js recompiles programs; canvas textures / composer / particles need an explicit refresh.
+   */
+  restoreAfterContextLoss(): void {
+    this.markGlyph = '';
+    this.markColorHex = -1;
+    if (this.skyGradientTex) {
+      this.skyGradientTex.dispose();
+      this.skyGradientTex = null;
+    }
+    this.composer = null;
+    this.bloomPass = null;
+    this.disposeParticles();
+    this.batch?.syncBackAppearance();
+    this.onResize();
+    this.syncBloom(this.quality);
+    if (this.lastThemeModules) {
+      this.applyTheme(this.lastThemeModules);
+    }
+  }
+
   private ensureBatch(): TileInstanceBatch {
     if (!this.batch) {
       this.batch = new TileInstanceBatch(160);

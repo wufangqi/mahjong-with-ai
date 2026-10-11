@@ -19,6 +19,10 @@ declare global {
       actionLog: () => Command[];
       exportJson: () => Promise<string>;
       clearLocalData: () => Promise<void>;
+      isContextLost: () => boolean;
+      loseWebGLContext: () => boolean;
+      restoreWebGLContext: () => boolean;
+      forceContextRestore: () => void;
       refreshPersistMenu: () => Promise<void>;
       hasContinue: () => boolean;
       incompatibleReason: () => string | null;

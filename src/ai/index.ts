@@ -5,6 +5,7 @@ export {
   assertNoTokenLeak,
   clearProxyToken,
   defaultExternalAiConfig,
+  EXTERNAL_AI_STORAGE_KEY,
   loadExternalAiConfig,
   loadProxyToken,
   opponentSeats,

@@ -145,6 +145,12 @@ body.loading #main-menu { visibility: hidden; }
   background: rgba(60,20,10,.45); font-size: 13px; line-height: 1.5;
 }
 .save-notice p { margin: 0 0 10px; }
+.privacy-notice {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(232, 220, 190, 0.78);
+}
 .dev-replay-field {
   display: flex; flex-direction: column; gap: 6px; font-size: 12px; opacity: .85;
 }

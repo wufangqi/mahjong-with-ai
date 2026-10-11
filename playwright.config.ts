@@ -1,6 +1,13 @@
 import { defineConfig, devices } from '@playwright/test';
 import { CHROME_UHD_GPU_ARGS } from './tools/budget/chromeGpuArgs.mjs';
 
+const publishOnly = /publish\.spec\.ts/;
+/** Firefox/WebKit need host libs + usable WebGL2; enable in CI or PUBLISH_MULTI_BROWSER=1. */
+const multiBrowser =
+  process.env.CI === 'true' ||
+  process.env.CI === '1' ||
+  process.env.PUBLISH_MULTI_BROWSER === '1';
+
 export default defineConfig({
   testDir: 'e2e',
   fullyParallel: true,
@@ -28,5 +35,21 @@ export default defineConfig({
         },
       },
     },
+    ...(multiBrowser
+      ? [
+          {
+            // Edge shares Chromium; exercise Gecko for Firefox acceptance.
+            name: 'firefox',
+            testMatch: publishOnly,
+            use: { ...devices['Desktop Firefox'] },
+          },
+          {
+            // WebKit stands in for desktop Safari on Linux CI.
+            name: 'webkit',
+            testMatch: publishOnly,
+            use: { ...devices['Desktop Safari'] },
+          },
+        ]
+      : []),
   ],
 });

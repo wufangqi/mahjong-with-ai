@@ -70,6 +70,7 @@
     <div class="main-menu-inner">
       <h2>主菜单</h2>
       <p class="menu-blurb">开始一场本地游戏。第一局随机庄；结算后可下一局或结束。无总分、无筹码。对手默认 easy，可改外接 AI。每个完成动作后自动保存，可继续最近一场。</p>
+      <p id="privacy-notice" data-testid="privacy-notice" class="privacy-notice">本地优先：无分析 SDK、无遥测、无自动崩溃上报。除你明确启用的外接 AI 外，从本地静态服务器断网亦可完整游玩。可随时「清除本地数据」。</p>
       <label class="seed-field menu-seed">
         <span>种子</span>
         <input id="seed" data-testid="seed-input" type="number" value="42" />
@@ -186,9 +187,9 @@
 
   <div id="hint">单击选牌 · 再点确认出牌 · 可响应时选胡 / 吃 / 碰 / 过</div>
 
-  <div id="error"><div>
+  <div id="error" data-testid="boot-error"><div>
     <h2>WebGL 不可用或加载失败</h2>
-    <p>本应用需要支持 WebGL2 的桌面浏览器。请使用开发服务器或生产静态构建打开。</p>
+    <p>本应用需要支持 WebGL2 的桌面浏览器（当前 Chrome、Edge、Firefox 或 Safari）。请使用开发服务器或生产静态构建打开。</p>
   </div></div>
 
   <script type="module" src="/src/main.ts"></script>

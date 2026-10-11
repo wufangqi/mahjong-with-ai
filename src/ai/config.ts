@@ -15,8 +15,9 @@ export interface ExternalAiSessionSecrets {
   proxyToken: string;
 }
 
-const STORAGE_KEY = 'mahjong.externalAi.v1';
+export const EXTERNAL_AI_STORAGE_KEY = 'mahjong.externalAi.v1';
 const TOKEN_KEY = 'mahjong.externalAi.token.v1';
+const STORAGE_KEY = EXTERNAL_AI_STORAGE_KEY;
 
 export const DEFAULT_EXTERNAL_AI_CONFIG: ExternalAiPersistedConfig = {
   proxyUrl: '',

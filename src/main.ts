@@ -1,6 +1,7 @@
 import './fonts/fonts.css';
 import './styles.css';
 import { LoadProgressTracker, type LoadStageId } from './budget/loadProgress';
+import { isWebGL2Available, showWebGL2UnsupportedPage } from './compat/webgl2';
 import { loadGameFonts } from './fonts/loadFonts';
 import { bootPlayApp } from './play/app';
 
@@ -28,6 +29,11 @@ async function main(): Promise<void> {
     tracker.complete(stage);
     paintLoadProgress(tracker);
   };
+
+  if (!isWebGL2Available()) {
+    showWebGL2UnsupportedPage();
+    return;
+  }
 
   try {
     await loadGameFonts();

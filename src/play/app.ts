@@ -1,5 +1,6 @@
 import {
   buildExternalAiDisclosure,
+  clearProxyToken,
   createEasyDecisionProvider,
   createExternalDecisionProvider,
   createSeatRoutedDecisionProvider,
@@ -19,6 +20,11 @@ import {
   sfxForSceneTier,
 } from '../audio';
 import {
+  AUTO_SKIP_STORAGE_KEY,
+  attachWebGLContextGuard,
+  clearLocalSettingsKeys,
+} from '../compat';
+import {
   FULL_SET_SIZE,
   PLAYER_SEAT,
   totalTileCount,
@@ -33,14 +39,12 @@ import { probeFromRenderer } from '../particles/probe';
 import { QualityController } from '../quality/qualityController';
 import {
   isQualityTier,
-  QUALITY_MODE_STORAGE_KEY,
-  QUALITY_STORAGE_KEY,
   type QualityTier,
 } from '../quality/types';
 import { listThemeOptions, loadTheme } from '../theme/catalog';
 import { ThemeManager } from '../theme/themeManager';
 import { isThemeId } from '../theme/schema';
-import { THEME_STORAGE_KEY, type ThemeId } from '../theme/types';
+import { type ThemeId } from '../theme/types';
 import { hasSustainedGrowth, type LoadStageId } from '../budget';
 import { TableView } from './tableView';
 import { formatTileCodes } from './tileLabels';
@@ -50,8 +54,6 @@ import {
   type SceneTier,
   type WinScenePlan,
 } from './winPresentation';
-
-const AUTO_SKIP_STORAGE_KEY = 'mahjong.scene.autoSkipOpponent';
 
 export type BootPlayAppOptions = {
   onStage?: (stage: LoadStageId) => void;
@@ -187,6 +189,29 @@ export function bootPlayApp(opts: BootPlayAppOptions = {}): Promise<void> {
   /** Developer replay must not write IndexedDB activeSave (AC2 continue). */
   let persistPausedForDevReplay = false;
   let persistDebounceTimer: number | null = null;
+  let contextLost = false;
+  let contextGuard: ReturnType<typeof attachWebGLContextGuard>;
+  const rebuildAfterContextRestore = (): void => {
+    try {
+      table.restoreAfterContextLoss();
+    } finally {
+      contextLost = false;
+      contextGuard.markRestored();
+    }
+    try {
+      refresh();
+    } catch {
+      // Menu-only refresh can throw if HUD nodes are mid-update; rendering already rebuilt.
+    }
+  };
+  contextGuard = attachWebGLContextGuard(canvas, {
+    onLost: () => {
+      contextLost = true;
+    },
+    onRestored: () => {
+      rebuildAfterContextRestore();
+    },
+  });
   const scenes = new WinSceneScheduler({
     now: () => performance.now(),
     defer: (fn, ms) => window.setTimeout(fn, ms),
@@ -198,6 +223,33 @@ export function bootPlayApp(opts: BootPlayAppOptions = {}): Promise<void> {
   let pendingDisclosureSources: ExternalAiPersistedConfig['seatSources'] | null = null;
 
   const allowHttpLocalhost = Boolean(import.meta.env.DEV);
+
+  const wipeLocalClientData = async (): Promise<void> => {
+    await persist.clearAllGameData();
+    clearLocalSettingsKeys(storage);
+    clearProxyToken(sessionStore);
+    proxyToken = '';
+    aiConfig = defaultExternalAiConfig();
+    cachedActiveSave = null;
+    incompatibleReason = null;
+    persistPausedForDevReplay = false;
+    syncMenuPersistUi();
+    syncAiSettingsForm();
+    rebuildDecisionProvider();
+    await themes.select('classic-green');
+    applyActiveTheme();
+    quality.setAuto();
+    quality.selectInitial(gpuProbe, fpsEma);
+    applyQualityToTable();
+    syncQualityChrome();
+    audio.setMasterVolume(0.8);
+    audio.setSfxVolume(0.7);
+    syncAudioChrome();
+    reducedMotion.setMode('system');
+    syncMotionChrome();
+    scenes.setAutoSkipOpponent(false);
+    autoSkipOpponentInput.checked = false;
+  };
 
   const rebuildDecisionProvider = (): void => {
     const anyExternal =
@@ -909,24 +961,11 @@ export function bootPlayApp(opts: BootPlayAppOptions = {}): Promise<void> {
   });
 
   clearDataBtn.addEventListener('click', () => {
-    const ok = window.confirm('清除本地存档、动作日志、主题与画质设置？此操作不可撤销。');
+    const ok = window.confirm(
+      '清除本地存档、动作日志、主题、画质、音量、动态偏好与外接 AI 设置？此操作不可撤销。',
+    );
     if (!ok) return;
-    void (async () => {
-      await persist.clearAllGameData();
-      storage.removeItem(THEME_STORAGE_KEY);
-      storage.removeItem(QUALITY_STORAGE_KEY);
-      storage.removeItem(QUALITY_MODE_STORAGE_KEY);
-      cachedActiveSave = null;
-      incompatibleReason = null;
-      persistPausedForDevReplay = false;
-      syncMenuPersistUi();
-      await themes.select('classic-green');
-      applyActiveTheme();
-      quality.setAuto();
-      quality.selectInitial(gpuProbe, fpsEma);
-      applyQualityToTable();
-      syncQualityChrome();
-    })();
+    void wipeLocalClientData();
   });
 
   const runDevReplay = (commands: LoggedCommand[]): void => {
@@ -1044,6 +1083,7 @@ export function bootPlayApp(opts: BootPlayAppOptions = {}): Promise<void> {
 
   const frame = (): void => {
     requestAnimationFrame(frame);
+    if (contextLost || contextGuard.isLost()) return;
     const now = performance.now();
     const dt = Math.min(100, now - lastFrameAt);
     lastFrameAt = now;
@@ -1091,15 +1131,30 @@ export function bootPlayApp(opts: BootPlayAppOptions = {}): Promise<void> {
     snapshot: () => session.snapshot(),
     actionLog: () => [...session.getActionLog()],
     exportJson: () => persist.exportJson(),
-    clearLocalData: async () => {
-      await persist.clearAllGameData();
-      storage.removeItem(THEME_STORAGE_KEY);
-      storage.removeItem(QUALITY_STORAGE_KEY);
-      storage.removeItem(QUALITY_MODE_STORAGE_KEY);
-      cachedActiveSave = null;
-      incompatibleReason = null;
-      persistPausedForDevReplay = false;
-      syncMenuPersistUi();
+    clearLocalData: () => wipeLocalClientData(),
+    isContextLost: () => contextLost || contextGuard.isLost(),
+    loseWebGLContext: () => {
+      const gl = table.renderer.getContext() as WebGL2RenderingContext;
+      const ext = gl.getExtension('WEBGL_lose_context');
+      if (!ext) return false;
+      ext.loseContext();
+      return true;
+    },
+    restoreWebGLContext: () => {
+      const gl = table.renderer.getContext() as WebGL2RenderingContext;
+      const ext = gl.getExtension('WEBGL_lose_context');
+      if (!ext) return false;
+      ext.restoreContext();
+      // Headless / some GPU stacks delay or skip the restored event; rebuild explicitly.
+      window.setTimeout(() => {
+        if (contextLost || contextGuard.isLost()) {
+          rebuildAfterContextRestore();
+        }
+      }, 0);
+      return true;
+    },
+    forceContextRestore: () => {
+      rebuildAfterContextRestore();
     },
     refreshPersistMenu: () => refreshPersistMenu(),
     hasContinue: () => cachedActiveSave !== null,

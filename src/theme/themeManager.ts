@@ -150,6 +150,8 @@ export class ThemeManager {
     const reusedCached = this.cache.has(id);
 
     if (id === this.activeId) {
+      // Always re-persist so clear-data → select(default) restores the key.
+      this.storage.setItem(THEME_STORAGE_KEY, this.activeId);
       return {
         activeId: this.activeId,
         transitionMs: this.transitionMs,
