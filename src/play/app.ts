@@ -1,4 +1,18 @@
 import {
+  buildExternalAiDisclosure,
+  createEasyDecisionProvider,
+  createExternalDecisionProvider,
+  createSeatRoutedDecisionProvider,
+  defaultExternalAiConfig,
+  isAllowedProxyUrl,
+  loadExternalAiConfig,
+  loadProxyToken,
+  saveExternalAiConfig,
+  saveProxyToken,
+  type ExternalAiPersistedConfig,
+  type OpponentSource,
+} from '../ai';
+import {
   AudioController,
   playSynthesized,
   sfxForDomainEvent,
@@ -34,25 +48,37 @@ const SEAT_NAMES: Record<Seat, string> = {
   3: '上家',
 };
 
+function memoryStorage(): Storage {
+  const map = new Map<string, string>();
+  return {
+    get length() {
+      return map.size;
+    },
+    clear: () => map.clear(),
+    getItem: (k) => map.get(k) ?? null,
+    setItem: (k, v) => {
+      map.set(k, v);
+    },
+    removeItem: (k) => {
+      map.delete(k);
+    },
+    key: () => null,
+  };
+}
+
 function browserStorage(): Storage {
   try {
     return window.localStorage;
   } catch {
-    const map = new Map<string, string>();
-    return {
-      get length() {
-        return map.size;
-      },
-      clear: () => map.clear(),
-      getItem: (k) => map.get(k) ?? null,
-      setItem: (k, v) => {
-        map.set(k, v);
-      },
-      removeItem: (k) => {
-        map.delete(k);
-      },
-      key: () => null,
-    };
+    return memoryStorage();
+  }
+}
+
+function browserSessionStorage(): Storage {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return memoryStorage();
   }
 }
 
@@ -66,6 +92,24 @@ export function bootPlayApp(): void {
   const handIndexEl = mustEl<HTMLElement>('hand-index');
   const startMatchBtn = mustEl<HTMLButtonElement>('start-match');
   const startBtn = mustEl<HTMLButtonElement>('start');
+  const openAiSettingsBtn = mustEl<HTMLButtonElement>('open-ai-settings');
+  const aiSettingsPanel = mustEl<HTMLElement>('ai-settings');
+  const aiSource1 = mustEl<HTMLSelectElement>('ai-source-1');
+  const aiSource2 = mustEl<HTMLSelectElement>('ai-source-2');
+  const aiSource3 = mustEl<HTMLSelectElement>('ai-source-3');
+  const aiProxyUrl = mustEl<HTMLInputElement>('ai-proxy-url');
+  const aiModel = mustEl<HTMLInputElement>('ai-model');
+  const aiProxyToken = mustEl<HTMLInputElement>('ai-proxy-token');
+  const aiSettingsError = mustEl<HTMLElement>('ai-settings-error');
+  const aiSettingsSave = mustEl<HTMLButtonElement>('ai-settings-save');
+  const aiSettingsCancel = mustEl<HTMLButtonElement>('ai-settings-cancel');
+  const aiDisclosure = mustEl<HTMLElement>('ai-disclosure');
+  const aiDisclosureIntro = mustEl<HTMLElement>('ai-disclosure-intro');
+  const aiDisclosureProxy = mustEl<HTMLElement>('ai-disclosure-proxy');
+  const aiDisclosureSent = mustEl<HTMLElement>('ai-disclosure-sent');
+  const aiDisclosureWithheld = mustEl<HTMLElement>('ai-disclosure-withheld');
+  const aiDisclosureConfirm = mustEl<HTMLButtonElement>('ai-disclosure-confirm');
+  const aiDisclosureCancel = mustEl<HTMLButtonElement>('ai-disclosure-cancel');
   const themeSelect = mustEl<HTMLSelectElement>('theme-select');
   const qualitySelect = mustEl<HTMLSelectElement>('quality-select');
   const themeNotice = mustEl<HTMLElement>('theme-notice');
@@ -108,6 +152,113 @@ export function bootPlayApp(): void {
     defer: (fn, ms) => window.setTimeout(fn, ms),
     cancelDefer: (h) => window.clearTimeout(h as number),
   });
+  const sessionStore = browserSessionStorage();
+  let aiConfig = loadExternalAiConfig(storage);
+  let proxyToken = loadProxyToken(sessionStore);
+  let pendingDisclosureSources: ExternalAiPersistedConfig['seatSources'] | null = null;
+
+  const allowHttpLocalhost = Boolean(import.meta.env.DEV);
+
+  const rebuildDecisionProvider = (): void => {
+    const anyExternal =
+      aiConfig.seatSources[1] === 'external' ||
+      aiConfig.seatSources[2] === 'external' ||
+      aiConfig.seatSources[3] === 'external';
+    const easy = createEasyDecisionProvider();
+    if (!anyExternal) {
+      session.setDecisionProvider(easy);
+      return;
+    }
+    const external = createExternalDecisionProvider({
+      proxyUrl: aiConfig.proxyUrl,
+      model: aiConfig.model,
+      proxyToken,
+      fallback: easy,
+    });
+    session.setDecisionProvider(
+      createSeatRoutedDecisionProvider({
+        seatSources: aiConfig.seatSources,
+        easy,
+        external,
+      }),
+    );
+  };
+  rebuildDecisionProvider();
+
+  const fillList = (el: HTMLElement, items: string[]): void => {
+    el.replaceChildren();
+    for (const text of items) {
+      const li = document.createElement('li');
+      li.textContent = text;
+      el.append(li);
+    }
+  };
+
+  const syncAiSettingsForm = (): void => {
+    aiSource1.value = aiConfig.seatSources[1];
+    aiSource2.value = aiConfig.seatSources[2];
+    aiSource3.value = aiConfig.seatSources[3];
+    aiProxyUrl.value = aiConfig.proxyUrl;
+    aiModel.value = aiConfig.model;
+    aiProxyToken.value = proxyToken;
+    aiSettingsError.hidden = true;
+    aiSettingsError.textContent = '';
+  };
+
+  const showAiDisclosure = (sources: ExternalAiPersistedConfig['seatSources']): void => {
+    const copy = buildExternalAiDisclosure(aiProxyUrl.value.trim() || aiConfig.proxyUrl);
+    aiDisclosureIntro.textContent = copy.intro;
+    aiDisclosureProxy.textContent = copy.proxyUrl;
+    fillList(aiDisclosureSent, copy.sentFields);
+    fillList(aiDisclosureWithheld, copy.withheldFields);
+    pendingDisclosureSources = sources;
+    aiDisclosure.hidden = false;
+  };
+
+  const readSourcesFromForm = (): ExternalAiPersistedConfig['seatSources'] => ({
+    1: (aiSource1.value === 'external' ? 'external' : 'easy') as OpponentSource,
+    2: (aiSource2.value === 'external' ? 'external' : 'easy') as OpponentSource,
+    3: (aiSource3.value === 'external' ? 'external' : 'easy') as OpponentSource,
+  });
+
+  const commitAiSettings = (sources: ExternalAiPersistedConfig['seatSources']): boolean => {
+    const next: ExternalAiPersistedConfig = {
+      ...defaultExternalAiConfig(),
+      proxyUrl: aiProxyUrl.value.trim(),
+      model: aiModel.value.trim(),
+      seatSources: sources,
+      disclosureAccepted: aiConfig.disclosureAccepted,
+    };
+    const wantsExternal =
+      sources[1] === 'external' || sources[2] === 'external' || sources[3] === 'external';
+    if (wantsExternal) {
+      if (!next.disclosureAccepted) {
+        showAiDisclosure(sources);
+        return false;
+      }
+      if (!isAllowedProxyUrl(next.proxyUrl, { allowHttpLocalhost })) {
+        aiSettingsError.hidden = false;
+        aiSettingsError.textContent = allowHttpLocalhost
+          ? '请填写 HTTPS 代理，或本机开发用的 http://localhost / http://127.0.0.1'
+          : '生产环境仅接受 HTTPS 代理地址';
+        return false;
+      }
+      if (!next.model) {
+        aiSettingsError.hidden = false;
+        aiSettingsError.textContent = '请填写模型名';
+        return false;
+      }
+    }
+    aiConfig = next;
+    proxyToken = aiProxyToken.value;
+    saveExternalAiConfig(storage, aiConfig);
+    saveProxyToken(sessionStore, proxyToken);
+    rebuildDecisionProvider();
+    aiSettingsPanel.hidden = true;
+    aiDisclosure.hidden = true;
+    pendingDisclosureSources = null;
+    return true;
+  };
   const themes = new ThemeManager({
     storage,
     now: () => performance.now(),
@@ -309,7 +460,9 @@ export function bootPlayApp(): void {
       btn.type = 'button';
       btn.dataset.testid = 'claim-chow';
       btn.textContent = `吃 ${formatTileCodes(option.codes)}`;
-      btn.addEventListener('click', () => session.claimChow(option.tileIds));
+      btn.addEventListener('click', () => {
+        void session.claimChow(option.tileIds);
+      });
       chowOptionsEl.append(btn);
     }
   };
@@ -323,7 +476,9 @@ export function bootPlayApp(): void {
       btn.type = 'button';
       btn.dataset.testid = 'declare-concealed-kong';
       btn.textContent = `暗杠 ${formatTileCodes([code])}`;
-      btn.addEventListener('click', () => session.declareConcealedKong(code));
+      btn.addEventListener('click', () => {
+        void session.declareConcealedKong(code);
+      });
       kongOptionsEl.append(btn);
     }
     for (const code of snap.playerAddedKongCodes) {
@@ -331,7 +486,9 @@ export function bootPlayApp(): void {
       btn.type = 'button';
       btn.dataset.testid = 'declare-added-kong';
       btn.textContent = `加杠 ${formatTileCodes([code])}`;
-      btn.addEventListener('click', () => session.declareAddedKong(code));
+      btn.addEventListener('click', () => {
+        void session.declareAddedKong(code);
+      });
       kongOptionsEl.append(btn);
     }
   };
@@ -446,6 +603,8 @@ export function bootPlayApp(): void {
       statusEl.textContent = '可响应：选择胡 / 杠 / 碰 / 吃 / 过（无倒计时）';
     } else if (snap.status === 'awaiting_player_win_response') {
       statusEl.textContent = snap.playerCanWin ? '可胡或过' : '请选择过';
+    } else if (snap.status === 'awaiting_ai') {
+      statusEl.textContent = '对手思考中…';
     } else if (snap.status === 'exhaustive_draw') {
       statusEl.textContent = '流局 · 不计番 · 庄家不变';
     } else if (snap.status === 'hand_won') {
@@ -477,7 +636,7 @@ export function bootPlayApp(): void {
     })();
   });
 
-  const startNewMatch = (seed: number): void => {
+  const startNewMatch = async (seed: number): Promise<void> => {
     lastHandWonEventCount = 0;
     lastEventCount = 0;
     quality.endGame();
@@ -487,7 +646,8 @@ export function bootPlayApp(): void {
       syncQualityChrome();
     }
     quality.beginGame();
-    match.startMatch(seed);
+    rebuildDecisionProvider();
+    await match.startMatch(seed);
   };
 
   const onStartMatchClick = (): void => {
@@ -497,26 +657,64 @@ export function bootPlayApp(): void {
       statusEl.textContent = '请输入有效数字种子';
       return;
     }
-    startNewMatch(seed);
+    void startNewMatch(seed);
   };
 
   startMatchBtn.addEventListener('click', onStartMatchClick);
   startBtn.addEventListener('click', onStartMatchClick);
 
-  claimWinBtn.addEventListener('click', () => session.claimWin());
-  claimKongBtn.addEventListener('click', () => session.claimKong());
-  claimPungBtn.addEventListener('click', () => session.claimPung());
-  declareWinBtn.addEventListener('click', () => session.claimWin());
-  passBtn.addEventListener('click', () => session.passResponse());
-  const goNextHand = (): void => {
+  openAiSettingsBtn.addEventListener('click', () => {
+    syncAiSettingsForm();
+    aiSettingsPanel.hidden = false;
+  });
+  aiSettingsCancel.addEventListener('click', () => {
+    aiSettingsPanel.hidden = true;
+    aiDisclosure.hidden = true;
+    pendingDisclosureSources = null;
+  });
+  aiSettingsSave.addEventListener('click', () => {
+    commitAiSettings(readSourcesFromForm());
+  });
+  aiDisclosureCancel.addEventListener('click', () => {
+    aiDisclosure.hidden = true;
+    pendingDisclosureSources = null;
+    // Revert external selections until confirmed.
+    syncAiSettingsForm();
+  });
+  aiDisclosureConfirm.addEventListener('click', () => {
+    if (!pendingDisclosureSources) return;
+    aiConfig = { ...aiConfig, disclosureAccepted: true };
+    commitAiSettings(pendingDisclosureSources);
+  });
+
+  claimWinBtn.addEventListener('click', () => {
+    void session.claimWin();
+  });
+  claimKongBtn.addEventListener('click', () => {
+    void session.claimKong();
+  });
+  claimPungBtn.addEventListener('click', () => {
+    void session.claimPung();
+  });
+  declareWinBtn.addEventListener('click', () => {
+    void session.claimWin();
+  });
+  passBtn.addEventListener('click', () => {
+    void session.passResponse();
+  });
+  const goNextHand = async (): Promise<void> => {
     lastHandWonEventCount = 0;
     lastEventCount = 0;
-    match.nextHand();
+    await match.nextHand();
     const nextSeed = session.snapshot().seed;
     if (nextSeed !== null) seedInput.value = String(nextSeed);
   };
-  nextHandBtn.addEventListener('click', goNextHand);
-  winNextHandBtn.addEventListener('click', goNextHand);
+  nextHandBtn.addEventListener('click', () => {
+    void goNextHand();
+  });
+  winNextHandBtn.addEventListener('click', () => {
+    void goNextHand();
+  });
   const endCurrentMatch = (): void => {
     lastHandWonEventCount = 0;
     lastEventCount = 0;
@@ -578,10 +776,10 @@ export function bootPlayApp(): void {
     if (!pointerDownAt) return;
     if (dragging) {
       const result = table.endDrag(e.clientX, e.clientY);
-      if (result?.intoRiver) session.discardByDrag(result.tileId);
+      if (result?.intoRiver) void session.discardByDrag(result.tileId);
       else refresh();
     } else {
-      session.clickTile(pointerDownAt.tileId);
+      void session.clickTile(pointerDownAt.tileId);
     }
     pointerDownAt = null;
     dragging = false;
@@ -629,12 +827,8 @@ export function bootPlayApp(): void {
 
   window.__play = {
     ready: false,
-    start: (seed: number) => {
-      startNewMatch(seed);
-    },
-    startMatch: (seed: number) => {
-      startNewMatch(seed);
-    },
+    start: (seed: number) => startNewMatch(seed),
+    startMatch: (seed: number) => startNewMatch(seed),
     endMatch: () => {
       endCurrentMatch();
     },
@@ -648,14 +842,12 @@ export function bootPlayApp(): void {
     claimChow: (tileIds: [string, string]) => session.claimChow(tileIds),
     passWin: () => session.passResponse(),
     passResponse: () => session.passResponse(),
-    startNextHand: (_seed?: number) => {
-      goNextHand();
-    },
-    loadPinghuWinDemo: () => {
+    startNextHand: (_seed?: number) => goNextHand(),
+    loadPinghuWinDemo: async () => {
       lastHandWonEventCount = 0;
       lastEventCount = 0;
       if (match.snapshot().status === 'menu') {
-        startNewMatch(DEFAULT_SEED);
+        await startNewMatch(DEFAULT_SEED);
       }
       session.loadPinghuWinDemo();
       // Demo settles as an in-match hand for settlement / end UI.
