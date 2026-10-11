@@ -7,11 +7,14 @@ test('play mode deals a seeded hand and continues after a player discard', async
 
   await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
 
+  await expect(page.getByTestId('main-menu')).toBeVisible();
   await page.getByTestId('seed-input').fill('42');
-  await page.getByTestId('start-hand').click();
+  await page.getByTestId('start-match').click();
 
+  await expect(page.getByTestId('main-menu')).toBeHidden();
   await expect(page.getByTestId('status')).toContainText('出牌');
   await expect(page.getByTestId('meta')).toContainText('实体牌 136/136');
+  await expect(page.getByTestId('hand-index')).toContainText('第 1 局');
 
   const discarded = await page.evaluate(() => {
     const snap = window.__play!.snapshot();
@@ -42,7 +45,7 @@ test('auto-play reaches 流局 settlement with revealed hands', async ({ page })
   await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
 
   await page.getByTestId('seed-input').fill('42');
-  await page.getByTestId('start-hand').click();
+  await page.getByTestId('start-match').click();
 
   await page.evaluate(() => window.__play!.autoPlayToDraw());
 
@@ -51,6 +54,7 @@ test('auto-play reaches 流局 settlement with revealed hands', async ({ page })
   await expect(page.getByTestId('draw-panel')).toContainText('不计番');
   await expect(page.getByTestId('draw-seats').locator('.draw-seat')).toHaveCount(4);
   await expect(page.getByTestId('status')).toContainText('流局');
+  await expect(page.getByTestId('end-match')).toBeVisible();
 
   const settlement = await page.evaluate(() => {
     const snap = window.__play!.snapshot();
@@ -59,6 +63,8 @@ test('auto-play reaches 流局 settlement with revealed hands', async ({ page })
       wall: snap.state!.wall.length,
       fan: snap.settlement!.fanBySeat,
       dealer: snap.state!.dealer,
+      matchStatus: window.__play!.matchSnapshot().status,
+      handIndex: window.__play!.matchSnapshot().handIndex,
       concealedPlusMelds: snap.settlement!.seats.map((s) => {
         const melds = snap.state!.seats[s.seat].melds.length;
         return s.hand.length + melds * 3;
@@ -66,14 +72,28 @@ test('auto-play reaches 流局 settlement with revealed hands', async ({ page })
     };
   });
   expect(settlement.status).toBe('exhaustive_draw');
+  expect(settlement.matchStatus).toBe('hand_settled');
   expect(settlement.wall).toBe(0);
   expect(settlement.fan).toEqual({ 0: 0, 1: 0, 2: 0, 3: 0 });
   expect(settlement.concealedPlusMelds).toEqual([13, 13, 13, 13]);
 
   const dealerBefore = settlement.dealer;
   await page.getByTestId('next-hand').click();
-  const dealerAfter = await page.evaluate(() => window.__play!.snapshot().state!.dealer);
-  expect(dealerAfter).toBe(dealerBefore);
+  const afterNext = await page.evaluate(() => ({
+    dealer: window.__play!.snapshot().state!.dealer,
+    handIndex: window.__play!.matchSnapshot().handIndex,
+  }));
+  expect(afterNext.dealer).toBe(dealerBefore);
+  expect(afterNext.handIndex).toBe(2);
+  await expect(page.getByTestId('hand-index')).toContainText('第 2 局');
+
+  await page.evaluate(() => window.__play!.autoPlayToDraw());
+  await page.getByTestId('end-match').click();
+  await expect(page.getByTestId('main-menu')).toBeVisible();
+  const ended = await page.evaluate(() => window.__play!.matchSnapshot());
+  expect(ended.status).toBe('menu');
+  expect(ended.handIndex).toBe(0);
+  expect(ended.hand.state).toBeNull();
 });
 
 test('平胡 claim plays basic scene and shows settlement with replay', async ({ page }) => {

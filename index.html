@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>AI 爽胡麻将 · 三档画质</title>
+<title>AI 爽胡麻将 · 连续多局</title>
 </head>
-<body class="play" data-theme="classic-green">
+<body class="play menu" data-theme="classic-green">
   <canvas id="c" data-testid="table-canvas"></canvas>
   <div id="banner" data-testid="win-banner" aria-hidden="true">
     <div id="banner-main" class="main">胡</div>
@@ -14,15 +14,10 @@
 
   <header>
     <h1>AI 爽胡麻将</h1>
-    <p>三档画质 · GPU 粒子兜底 · 双主题</p>
+    <p>连续多局 · 三名 easy 对手 · 无整场总分</p>
   </header>
 
-  <div id="hud">
-    <label class="seed-field">
-      <span>种子</span>
-      <input id="seed" data-testid="seed-input" type="number" value="42" />
-    </label>
-    <button id="start" data-testid="start-hand" type="button">开始一局</button>
+  <div id="chrome" data-testid="chrome">
     <label class="theme-field">
       <span>主题</span>
       <select id="theme-select" data-testid="theme-select" aria-label="主题"></select>
@@ -38,10 +33,28 @@
     </label>
     <a class="preview-link" href="./preview.html">效果预览</a>
   </div>
+
+  <div id="main-menu" data-testid="main-menu">
+    <div class="main-menu-inner">
+      <h2>主菜单</h2>
+      <p class="menu-blurb">开始一场本地对局。第一局随机庄；结算后可下一局或结束。无总分、无筹码。</p>
+      <label class="seed-field menu-seed">
+        <span>种子</span>
+        <input id="seed" data-testid="seed-input" type="number" value="42" />
+      </label>
+      <button id="start-match" data-testid="start-match" type="button">开始一场</button>
+      <!-- Compat alias for older e2e / harnesses -->
+      <button id="start" data-testid="start-hand" type="button" class="sr-only" tabindex="-1">开始一场</button>
+    </div>
+  </div>
+
+  <div id="hud" data-testid="hud" hidden>
+    <span id="hand-index" data-testid="hand-index" class="hand-index"></span>
+  </div>
   <div id="theme-notice" data-testid="theme-notice" hidden></div>
 
-  <div id="status" data-testid="status">加载中…</div>
-  <div id="meta" data-testid="meta"></div>
+  <div id="status" data-testid="status" hidden>加载中…</div>
+  <div id="meta" data-testid="meta" hidden></div>
 
   <div id="response-bar" data-testid="response-bar" hidden>
     <button id="claim-win" data-testid="claim-win" type="button">胡</button>
@@ -63,6 +76,7 @@
       <div id="draw-seats" data-testid="draw-seats" class="draw-seats"></div>
       <div class="draw-actions">
         <button id="next-hand" data-testid="next-hand" type="button">下一局</button>
+        <button id="end-match-draw" data-testid="end-match" type="button">结束</button>
       </div>
     </div>
   </div>
@@ -70,11 +84,12 @@
   <div id="win-panel" data-testid="win-panel" hidden>
     <div class="win-panel-inner">
       <h2>胡牌结算</h2>
-      <p class="win-intro">赢家 · 番型 · 番数</p>
+      <p class="win-intro">赢家 · 番型 · 番数 · 无整场总分</p>
       <div id="win-summary" data-testid="win-summary" class="win-summary"></div>
       <div class="win-actions">
         <button id="replay-scene" data-testid="replay-scene" type="button">重播场面</button>
         <button id="win-next-hand" data-testid="win-next-hand" type="button">下一局</button>
+        <button id="end-match-win" data-testid="end-match-win" type="button">结束</button>
       </div>
     </div>
   </div>

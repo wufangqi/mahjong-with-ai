@@ -1,5 +1,5 @@
 import { FULL_SET_SIZE, PLAYER_SEAT, totalTileCount, type Seat } from '../core';
-import { PlaySession } from '../game/session';
+import { MatchSession } from '../game/match';
 import { probeFromRenderer } from '../particles/probe';
 import { QualityController } from '../quality/qualityController';
 import { isQualityTier, type QualityTier } from '../quality/types';
@@ -52,6 +52,10 @@ export function bootPlayApp(): void {
   const seedInput = mustEl<HTMLInputElement>('seed');
   const statusEl = mustEl<HTMLElement>('status');
   const metaEl = mustEl<HTMLElement>('meta');
+  const mainMenu = mustEl<HTMLElement>('main-menu');
+  const hud = mustEl<HTMLElement>('hud');
+  const handIndexEl = mustEl<HTMLElement>('hand-index');
+  const startMatchBtn = mustEl<HTMLButtonElement>('start-match');
   const startBtn = mustEl<HTMLButtonElement>('start');
   const themeSelect = mustEl<HTMLSelectElement>('theme-select');
   const qualitySelect = mustEl<HTMLSelectElement>('quality-select');
@@ -68,9 +72,11 @@ export function bootPlayApp(): void {
   const drawPanel = mustEl<HTMLElement>('draw-panel');
   const drawSeats = mustEl<HTMLElement>('draw-seats');
   const nextHandBtn = mustEl<HTMLButtonElement>('next-hand');
+  const endMatchDrawBtn = mustEl<HTMLButtonElement>('end-match-draw');
   const winPanel = mustEl<HTMLElement>('win-panel');
   const winSummary = mustEl<HTMLElement>('win-summary');
   const winNextHandBtn = mustEl<HTMLButtonElement>('win-next-hand');
+  const endMatchWinBtn = mustEl<HTMLButtonElement>('end-match-win');
   const replaySceneBtn = mustEl<HTMLButtonElement>('replay-scene');
   const banner = mustEl<HTMLElement>('banner');
   const bannerMain = mustEl<HTMLElement>('banner-main');
@@ -78,7 +84,8 @@ export function bootPlayApp(): void {
 
   seedInput.value = String(DEFAULT_SEED);
 
-  const session = new PlaySession();
+  const match = new MatchSession();
+  const session = match.hand;
   const table = new TableView(canvas);
   const scenes = new WinSceneScheduler();
   const storage = browserStorage();
@@ -177,6 +184,26 @@ export function bootPlayApp(): void {
   };
 
   scenes.onPlay(showScene);
+
+  const showMenu = (): void => {
+    document.body.classList.add('menu');
+    mainMenu.hidden = false;
+    hud.hidden = true;
+    statusEl.hidden = true;
+    metaEl.hidden = true;
+    responseBar.hidden = true;
+    selfBar.hidden = true;
+    drawPanel.hidden = true;
+    winPanel.hidden = true;
+  };
+
+  const showTableChrome = (): void => {
+    document.body.classList.remove('menu');
+    mainMenu.hidden = true;
+    hud.hidden = false;
+    statusEl.hidden = false;
+    metaEl.hidden = false;
+  };
 
   const renderDrawPanel = (): void => {
     const snap = session.snapshot();
@@ -289,19 +316,21 @@ export function bootPlayApp(): void {
   };
 
   const refresh = (): void => {
-    const snap = session.snapshot();
+    const matchSnap = match.snapshot();
+    const snap = matchSnap.hand;
     table.sync(snap.state, snap.selectedTileId);
     maybeScheduleWinScene();
 
-    if (!snap.state) {
-      statusEl.textContent = '输入种子并开始一局';
+    if (matchSnap.status === 'menu' || !snap.state) {
+      showMenu();
+      statusEl.textContent = '从主菜单开始一场';
       metaEl.textContent = '';
-      responseBar.hidden = true;
-      selfBar.hidden = true;
-      drawPanel.hidden = true;
-      winPanel.hidden = true;
+      handIndexEl.textContent = '';
       return;
     }
+
+    showTableChrome();
+    handIndexEl.textContent = `第 ${matchSnap.handIndex} 局 · 无整场总分`;
 
     const dealerLabel = snap.state.dealer === PLAYER_SEAT ? '玩家' : `座位 ${snap.state.dealer}`;
     metaEl.textContent = [
@@ -351,7 +380,7 @@ export function bootPlayApp(): void {
     renderWinPanel();
   };
 
-  session.subscribe(refresh);
+  match.subscribe(refresh);
 
   themeSelect.addEventListener('change', () => {
     const next = themeSelect.value;
@@ -368,7 +397,7 @@ export function bootPlayApp(): void {
     })();
   });
 
-  const startNewGame = (seed: number): void => {
+  const startNewMatch = (seed: number): void => {
     lastHandWonEventCount = 0;
     quality.endGame();
     if (quality.getMode() === 'auto') {
@@ -377,35 +406,43 @@ export function bootPlayApp(): void {
       syncQualityChrome();
     }
     quality.beginGame();
-    session.start(seed);
+    match.startMatch(seed);
   };
 
-  startBtn.addEventListener('click', () => {
+  const onStartMatchClick = (): void => {
     const seed = Number.parseInt(seedInput.value, 10);
     if (!Number.isFinite(seed)) {
+      statusEl.hidden = false;
       statusEl.textContent = '请输入有效数字种子';
       return;
     }
-    startNewGame(seed);
-  });
+    startNewMatch(seed);
+  };
+
+  startMatchBtn.addEventListener('click', onStartMatchClick);
+  startBtn.addEventListener('click', onStartMatchClick);
 
   claimWinBtn.addEventListener('click', () => session.claimWin());
   claimKongBtn.addEventListener('click', () => session.claimKong());
   claimPungBtn.addEventListener('click', () => session.claimPung());
   declareWinBtn.addEventListener('click', () => session.claimWin());
   passBtn.addEventListener('click', () => session.passResponse());
-  nextHandBtn.addEventListener('click', () => {
-    const nextSeed = (session.snapshot().seed ?? DEFAULT_SEED) + 1;
-    seedInput.value = String(nextSeed);
+  const goNextHand = (): void => {
     lastHandWonEventCount = 0;
-    session.startNextHand(nextSeed);
-  });
-  winNextHandBtn.addEventListener('click', () => {
-    const nextSeed = (session.snapshot().seed ?? DEFAULT_SEED) + 1;
-    seedInput.value = String(nextSeed);
+    match.nextHand();
+    const nextSeed = session.snapshot().seed;
+    if (nextSeed !== null) seedInput.value = String(nextSeed);
+  };
+  nextHandBtn.addEventListener('click', goNextHand);
+  winNextHandBtn.addEventListener('click', goNextHand);
+  const endCurrentMatch = (): void => {
     lastHandWonEventCount = 0;
-    session.startNextHand(nextSeed);
-  });
+    quality.endGame();
+    match.endMatch();
+    table.sync(null, null);
+  };
+  endMatchDrawBtn.addEventListener('click', endCurrentMatch);
+  endMatchWinBtn.addEventListener('click', endCurrentMatch);
   replaySceneBtn.addEventListener('click', () => scenes.replay());
 
   let pointerDownAt: { x: number; y: number; tileId: string } | null = null;
@@ -488,8 +525,15 @@ export function bootPlayApp(): void {
   window.__play = {
     ready: false,
     start: (seed: number) => {
-      startNewGame(seed);
+      startNewMatch(seed);
     },
+    startMatch: (seed: number) => {
+      startNewMatch(seed);
+    },
+    endMatch: () => {
+      endCurrentMatch();
+    },
+    matchSnapshot: () => match.snapshot(),
     snapshot: () => session.snapshot(),
     clickTile: (tileId: string) => session.clickTile(tileId),
     discardByDrag: (tileId: string) => session.discardByDrag(tileId),
@@ -499,13 +543,17 @@ export function bootPlayApp(): void {
     claimChow: (tileIds: [string, string]) => session.claimChow(tileIds),
     passWin: () => session.passResponse(),
     passResponse: () => session.passResponse(),
-    startNextHand: (seed: number) => {
-      lastHandWonEventCount = 0;
-      session.startNextHand(seed);
+    startNextHand: (_seed?: number) => {
+      goNextHand();
     },
     loadPinghuWinDemo: () => {
       lastHandWonEventCount = 0;
+      if (match.snapshot().status === 'menu') {
+        startNewMatch(DEFAULT_SEED);
+      }
       session.loadPinghuWinDemo();
+      // Demo settles as an in-match hand for settlement / end UI.
+      refresh();
     },
     replayScene: () => scenes.replay(),
     lastScenePlans: () => scenes.getLastPlans(),
@@ -569,9 +617,9 @@ export function bootPlayApp(): void {
     }
     applyQualityToTable();
     syncQualityChrome();
-    quality.beginGame();
+    showMenu();
     document.body.classList.add('ready');
     if (window.__play) window.__play.ready = true;
-    session.start(DEFAULT_SEED);
+    refresh();
   });
 }

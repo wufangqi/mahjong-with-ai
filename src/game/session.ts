@@ -1,4 +1,11 @@
 import {
+  buildSeatView,
+  createEasyDecisionProvider,
+  listLegalActions,
+  type DecisionAction,
+  type DecisionProvider,
+} from '../ai';
+import {
   applyCommand,
   canWinOnDiscard,
   canWinOnDraw,
@@ -59,6 +66,23 @@ export class PlaySession {
   private passClaims = false;
   /** When true, every seat passes win responses (流局 auto-play helper). */
   private forcePassWins = false;
+  private readonly ai: DecisionProvider;
+
+  constructor(ai: DecisionProvider = createEasyDecisionProvider()) {
+    this.ai = ai;
+  }
+
+  /** Clear the active hand (e.g. after ending a match). */
+  reset(): void {
+    this.status = 'idle';
+    this.state = null;
+    this.selectedTileId = null;
+    this.events = [];
+    this.seed = null;
+    this.passClaims = false;
+    this.forcePassWins = false;
+    this.emit();
+  }
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -206,37 +230,8 @@ export class PlaySession {
         this.state = drawn.state;
         this.events.push(...drawn.events);
         const seat = this.state.turn;
-        const self = legalSelfActions(this.state, seat);
-        if (self.canWin && !this.forcePassWins) {
-          const result = applyCommand(this.state, { type: 'DeclareWin', seat });
-          this.state = result.state;
-          this.events.push(...result.events);
-          continue;
-        }
-        if (self.concealedKongCodes[0] && !this.passClaims) {
-          const result = applyCommand(this.state, {
-            type: 'DeclareConcealedKong',
-            seat,
-            code: self.concealedKongCodes[0],
-          });
-          this.state = result.state;
-          this.events.push(...result.events);
-          continue;
-        }
-        if (self.addedKongCodes[0] && !this.passClaims) {
-          const result = applyCommand(this.state, {
-            type: 'DeclareAddedKong',
-            seat,
-            code: self.addedKongCodes[0],
-          });
-          this.state = result.state;
-          this.events.push(...result.events);
-          continue;
-        }
-        const tileId = pickAutoDiscard(this.state, seat);
-        const result = applyCommand(this.state, { type: 'Discard', seat, tileId });
-        this.state = result.state;
-        this.events.push(...result.events);
+        const action = this.chooseAiAction(seat);
+        this.applyAiAction(seat, action);
         continue;
       }
 
@@ -256,14 +251,10 @@ export class PlaySession {
       if (seat === PLAYER_SEAT) continue;
       const window = this.state.responseWindow;
       if (!window || !window.pending.includes(seat)) continue;
-      const tileCode = window.tile.code;
-      const command =
-        !this.forcePassWins && canWinOnDiscard(this.state, seat, tileCode)
-          ? ({ type: 'ClaimWin' as const, seat })
-          : ({ type: 'Pass' as const, seat });
-      const result = applyCommand(this.state, command);
-      this.state = result.state;
-      this.events.push(...result.events);
+      const action = this.forcePassWins
+        ? ({ type: 'Pass' } as const)
+        : this.chooseAiAction(seat);
+      this.applyAiAction(seat, action);
       if (!this.state || this.state.phase !== 'awaiting_win_response') return;
     }
   }
@@ -280,33 +271,81 @@ export class PlaySession {
       const window = this.state.responseWindow;
       if (!window || !window.pending.includes(seat)) continue;
 
-      const claims = legalClaims(this.state, seat);
-      let command:
-        | { type: 'Pass'; seat: Seat }
-        | { type: 'ClaimWin'; seat: Seat }
-        | { type: 'ClaimKong'; seat: Seat }
-        | { type: 'ClaimPung'; seat: Seat }
-        | { type: 'ClaimChow'; seat: Seat; tileIds: [string, string] };
-
-      if (this.passClaims) {
-        command = { type: 'Pass', seat };
-      } else if (claims.canWin) {
-        command = { type: 'ClaimWin', seat };
-      } else if (claims.canKong) {
-        command = { type: 'ClaimKong', seat };
-      } else if (claims.canPung) {
-        command = { type: 'ClaimPung', seat };
-      } else if (claims.chowOptions[0]) {
-        command = { type: 'ClaimChow', seat, tileIds: claims.chowOptions[0].tileIds };
-      } else {
-        command = { type: 'Pass', seat };
-      }
-
-      const result = applyCommand(this.state, command);
-      this.state = result.state;
-      this.events.push(...result.events);
+      const action = this.passClaims ? ({ type: 'Pass' } as const) : this.chooseAiAction(seat);
+      this.applyAiAction(seat, action);
       if (!this.state || this.state.phase !== 'awaiting_claim_response') return;
     }
+  }
+
+  private chooseAiAction(seat: Seat): DecisionAction {
+    if (!this.state) throw new Error('no hand');
+    let legal = listLegalActions(this.state, seat);
+    if (this.forcePassWins) {
+      legal = legal.filter((a) => a.type !== 'ClaimWin' && a.type !== 'DeclareWin');
+    }
+    if (this.passClaims) {
+      legal = legal.filter(
+        (a) =>
+          a.type !== 'ClaimKong' &&
+          a.type !== 'ClaimPung' &&
+          a.type !== 'ClaimChow' &&
+          a.type !== 'DeclareConcealedKong' &&
+          a.type !== 'DeclareAddedKong',
+      );
+    }
+    if (legal.length === 0) {
+      legal = [{ type: 'Pass' }];
+    }
+    return this.ai.choose(buildSeatView(this.state, seat), legal);
+  }
+
+  private applyAiAction(seat: Seat, action: DecisionAction): void {
+    if (!this.state) return;
+    const legal = listLegalActions(this.state, seat);
+    if (!legal.some((a) => decisionEquals(a, action))) {
+      throw new Error(`AI returned illegal action for seat ${seat}: ${action.type}`);
+    }
+
+    let result;
+    switch (action.type) {
+      case 'Discard':
+        result = applyCommand(this.state, { type: 'Discard', seat, tileId: action.tileId });
+        break;
+      case 'DeclareWin':
+        result = applyCommand(this.state, { type: 'DeclareWin', seat });
+        break;
+      case 'DeclareConcealedKong':
+        result = applyCommand(this.state, {
+          type: 'DeclareConcealedKong',
+          seat,
+          code: action.code,
+        });
+        break;
+      case 'DeclareAddedKong':
+        result = applyCommand(this.state, { type: 'DeclareAddedKong', seat, code: action.code });
+        break;
+      case 'ClaimWin':
+        result = applyCommand(this.state, { type: 'ClaimWin', seat });
+        break;
+      case 'ClaimKong':
+        result = applyCommand(this.state, { type: 'ClaimKong', seat });
+        break;
+      case 'ClaimPung':
+        result = applyCommand(this.state, { type: 'ClaimPung', seat });
+        break;
+      case 'ClaimChow':
+        result = applyCommand(this.state, { type: 'ClaimChow', seat, tileIds: action.tileIds });
+        break;
+      case 'Pass':
+        result = applyCommand(this.state, { type: 'Pass', seat });
+        break;
+      default: {
+        const _exhaustive: never = action;
+        throw new Error(`unhandled AI action ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+    this.state = result.state;
+    this.events.push(...result.events);
   }
 
   selectTile(tileId: string): void {
@@ -501,6 +540,27 @@ export class PlaySession {
     this.selectedTileId = null;
     this.status = 'awaiting_player_win_response';
     this.emit();
+  }
+}
+
+function decisionEquals(a: DecisionAction, b: DecisionAction): boolean {
+  if (a.type !== b.type) return false;
+  switch (a.type) {
+    case 'Discard':
+      return b.type === 'Discard' && a.tileId === b.tileId;
+    case 'DeclareConcealedKong':
+    case 'DeclareAddedKong':
+      return (
+        (b.type === 'DeclareConcealedKong' || b.type === 'DeclareAddedKong') &&
+        b.type === a.type &&
+        a.code === b.code
+      );
+    case 'ClaimChow':
+      return (
+        b.type === 'ClaimChow' && a.tileIds[0] === b.tileIds[0] && a.tileIds[1] === b.tileIds[1]
+      );
+    default:
+      return true;
   }
 }
 

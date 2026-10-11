@@ -1,3 +1,4 @@
+import type { MatchSnapshot } from '../game/match';
 import type { PlaySessionSnapshot } from '../game/session';
 import type { GpuProbeInfo, QualityMode, QualitySettings, QualityTier } from '../quality/types';
 import type { ThemeId, ThemeModules, ThemePalette, ThemeSelectResult } from '../theme/types';
@@ -8,6 +9,9 @@ declare global {
     __play?: {
       ready: boolean;
       start: (seed: number) => void;
+      startMatch: (seed: number) => void;
+      endMatch: () => void;
+      matchSnapshot: () => MatchSnapshot;
       snapshot: () => PlaySessionSnapshot;
       clickTile: (tileId: string) => void;
       discardByDrag: (tileId: string) => void;
@@ -17,7 +21,7 @@ declare global {
       claimChow: (tileIds: [string, string]) => void;
       passWin: () => void;
       passResponse: () => void;
-      startNextHand: (seed: number) => void;
+      startNextHand: (seed?: number) => void;
       loadPinghuWinDemo: () => void;
       replayScene: () => void;
       lastScenePlans: () => WinScenePlan[];
