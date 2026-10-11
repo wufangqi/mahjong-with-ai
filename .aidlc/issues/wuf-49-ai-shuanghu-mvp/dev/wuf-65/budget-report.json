@@ -1,5 +1,5 @@
 {
-  "measuredAt": "2026-10-11T03:29:59.752Z",
+  "measuredAt": "2026-10-11T03:46:56.305Z",
   "gitHint": null,
   "budgets": {
     "firstScreenTransferBytes": 3145728,
@@ -13,41 +13,41 @@
     "entries": [
       {
         "path": "index.html",
-        "bytes": 3177,
+        "bytes": 3175,
         "encoding": "gzip"
       },
       {
-        "path": "assets/main-C2W9VZhO.js",
-        "bytes": 31070,
+        "path": "assets/main-BoFvYsAz.js",
+        "bytes": 31144,
         "encoding": "gzip"
       },
       {
-        "path": "assets/themeManager-xeyYIhuw.js",
-        "bytes": 3750,
+        "path": "assets/themeManager-Be10SuIi.js",
+        "bytes": 3749,
         "encoding": "gzip"
       },
       {
-        "path": "assets/skyBlend-BkJlzPEm.js",
-        "bytes": 129497,
+        "path": "assets/skyBlend-gnG0Ap9u.js",
+        "bytes": 129496,
         "encoding": "gzip"
       },
       {
-        "path": "assets/themeManager-YIGk091D.css",
-        "bytes": 3913,
+        "path": "assets/themeManager-gGnFEXi-.css",
+        "bytes": 3908,
         "encoding": "gzip"
       },
       {
-        "path": "assets/source-han-sans-sc-subset-ozNjfv6Q.woff2",
-        "bytes": 104920,
+        "path": "assets/source-han-sans-sc-subset-1M0rBs0_.woff2",
+        "bytes": 74848,
         "encoding": "raw"
       },
       {
-        "path": "assets/source-han-serif-sc-subset-3_qQ_HWP.woff2",
-        "bytes": 152076,
+        "path": "assets/source-han-serif-sc-subset-Bqy0sdMX.woff2",
+        "bytes": 108280,
         "encoding": "raw"
       }
     ],
-    "totalBytes": 428403,
+    "totalBytes": 354600,
     "budgetBytes": 3145728,
     "withinBudget": true
   },

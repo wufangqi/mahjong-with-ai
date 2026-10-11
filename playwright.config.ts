@@ -19,7 +19,13 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: {
+          // Expose performance.memory for soak growth samples (WUF-65).
+          args: ['--enable-precise-memory-info', '--disable-dev-shm-usage'],
+        },
+      },
     },
   ],
 });

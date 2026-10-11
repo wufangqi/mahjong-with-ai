@@ -11,11 +11,24 @@ npm run budget:measure
 
 Writes `.aidlc/issues/wuf-49-ai-shuanghu-mvp/dev/wuf-65/budget-report.json`.
 
-## Browser metrics
+## Browser metrics (includes full 50/100/20 soak)
 
 ```bash
 npx playwright install chromium
 npm run test:e2e -- e2e/budget.spec.ts
 ```
 
-Covers cold-start menu timing + loading bar, static-scene draw calls, mid FPS sample, theme-switch / scene soak growth check.
+- Cold start under CDP Fast 4G (1.6 Mbps down + 150 ms RTT)
+- Static-scene draw calls ≤100
+- Full soak: 50 hands / 100 scenes / 20 theme switches (heap + Three.js resource counts)
+- Mid + top FPS samples; absolute 60/30 gate when `gpuProbe` reports UHD-class iGPU
+
+## Hardware FPS (UHD 620-class)
+
+```bash
+npm run build
+# On a desktop with DISPLAY and DRM access (user in `render`/`video`):
+BUDGET_FPS_HEADED=1 npm run budget:fps
+```
+
+Writes `budget-fps.json`. Headless / no-DRM agents often stay on SwiftShader — the report records that and skips the absolute gate.

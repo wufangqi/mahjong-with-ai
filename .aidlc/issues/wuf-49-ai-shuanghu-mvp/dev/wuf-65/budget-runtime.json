@@ -1,10 +1,29 @@
 {
-  "measuredAt": "2026-10-11T03:29:27.571Z",
-  "midFpsSample": 6.650410108623366,
+  "measuredAt": "2026-10-11T03:48:42.452Z",
+  "gpuRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+  "uhd620Class": false,
+  "hostPciGpu": [
+    "00:02.0 VGA compatible controller: Intel Corporation CoffeeLake-S GT2 [UHD Graphics 630]"
+  ],
+  "uhd620ClassHost": true,
+  "midFpsSample": 8.841732978835628,
+  "topFpsSample": 8.848774441752465,
+  "midFpsTarget": 60,
+  "topFpsFloor": 30,
+  "fpsGateApplied": false,
   "drawCalls": 1,
+  "handSamples": 50,
   "themeSwitchSamples": 20,
-  "sceneReplaySamples": 20,
+  "sceneReplaySamples": 100,
+  "handSustainedGrowth": false,
   "themeSustainedGrowth": false,
   "sceneSustainedGrowth": false,
-  "note": "Full AC soak is 50 hands / 100 scenes / 20 theme switches; e2e uses a shorter proportional soak plus unit-tested growth detector. FPS target 60/30 is for UHD 620-class hosts — CI records the sample only."
+  "gpuResourceSustainedGrowth": false,
+  "networkProfile": {
+    "name": "Fast 4G (CDP)",
+    "downloadMbps": 1.6,
+    "uploadMbps": 0.75,
+    "latencyMs": 150
+  },
+  "note": "Heap via performance.memory; GPU resources via renderer.info.memory (no public VRAM API). Absolute mid/top FPS gate applies only when browser gpuProbe is UHD-class; hostPciGpu records the machine GPU even if Chromium is on SwiftShader."
 }
