@@ -1,81 +1,78 @@
-# WUF-65 review — 达到加载、性能与资源稳定预算（复审）
+# WUF-65 review — 达到加载、性能与资源稳定预算（复审 2）
 
 - **Fixed point**: `a3811be`（`origin/feature/wuf-49-ai-shuanghu-mvp` tip / Work 起点）
-- **HEAD**: `7623048` on `feature/wuf-65`（回修后）
-- **Diff**: `git diff a3811be...HEAD`；回修增量 `fbc4b3c...7623048`
-- **对照**: 前次 `review.md` 阻断 + issue AC + 更新后 `implement.md` / `budget-*.json` + stories 104 / 112 / 113 + ADR-0006 / 0008 / 0010
-- **Verdict**: `fail`
-- **合回**: 本轮 **不合回** 集成线（Leader 完成条件）
+- **HEAD**: `82e452f` on `feature/wuf-65`
+- **Diff**: `git diff a3811be...HEAD`；回修增量 `d17b52b...82e452f`
+- **对照**: 前次 `review.md` @ `d17b52b` 阻断（标点 cmap、UHD 绝对 FPS）+ issue AC + `implement.md` / `budget-*.json` + ADR-0006 / stories 104 / 112 / 113
+- **Verdict**: `pass`
+- **合回**: Leader 完成条件本轮 **不合回** 集成线（由后续流程合入）
 
 ## 复审：先前阻断
 
 | 阻断 | 状态 | 证据 |
 | --- | --- | --- |
-| Boot 文案缺字（ADR-0006 / story 104）`默进菜就绪度` | **CLOSED**（本项） | `chars-runtime.txt` 已含；WOFF2 cmap 含六字；`bootChars.test.ts` 锁 `LOAD_STAGES` + `就绪` + `加载进度` |
-| Fast 4G 仅延迟无吞吐 | **CLOSED** | CDP `Network.emulateNetworkConditions` 1.6/0.75 Mbps + 150 ms；冷启动 e2e ≤3s + 进度条非 `0%` |
-| Soak ≠ 50/100/20 | **CLOSED** | e2e 全量循环；`budget-runtime.json`：50 / 100 / 20；heap + `renderer.info.memory` 代理均无 sustained growth |
-| mid/top FPS 未测 / 无门槛 | **PARTIAL** | 接缝闭合：`sampleFps` + `playSceneDemo('top')` + `budget:fps`；`if (uhdClass)` 才断言 60/30。本机 PCI UHD 630 但 Chromium 无 DRM/`render` 组 → SwiftShader，`fpsGateApplied: false`，绝对 AC **仍未在真 iGPU 上证明** |
-| 显存 / heap 静默通过 | **residual** | GPU 资源计数始终采样；heap 仍在 `performance.memory` 缺失时跳过长度断言（软） |
+| WOFF2 丢掉 UI 标点 cmap（ADR-0006 回归） | **CLOSED** | `chars-runtime.txt` + `REQUIRED_UI_PUNCTUATION` 含 `–—…、。！，：；？`；sans/serif WOFF2 cmap 458 cps、标点与 boot 六字齐全；`fontCmap.test.ts`（fontkit）锁二进制 cmap |
+| UHD mid 60 / top ≥30 仅 SwiftShader 接缝 | **CLOSED** | `budget-fps.json` / `budget-runtime.json`：`ANGLE (Intel … UHD Graphics 630)`，`fpsGateApplied: true`，mid ≈60、top ≈59–60；`chromeGpuArgs.mjs` + `ensure-dri-acl.sh`；e2e 在 UHD host 上断言 |
+
+先前已 CLOSED（boot 六字 / Fast 4G CDP / 50·100·20 soak / 首屏·draw·主题预算）保持成立。
 
 ## Standards
 
 ### Documented standards
 
-1. **Hard — ADR-0006（新阻断）**  
-   重建子集在补上 boot 六字的同时，**丢掉**先前 WOFF2 中的标点 cmap：`–—…、。！，：；？`（sans/serif 均 452→448 cps；文件体积同步下降）。这些标点仍出现在用户可见文案（如 `app.ts` `join('、')`、`对手思考中…`；`index.html` 菜单句号/顿号与 `…` placeholder）。`chars-runtime.txt` 从未收录它们；`bootChars.test.ts` 只比对文本清单、不校验 WOFF2 cmap → 回归未被锁住。  
-   **Prior boot 六字 hard：CLOSED。本项新 hard：OPEN。**
+1. **OK — ADR-0006**  
+   前次 punct hard **CLOSED**。`requiredGlyphs.ts` 集中 boot + 标点；`fontCmap.test.ts` 打开发行 WOFF2 校验 codepoint，避免再只锁文本清单。
 
-2. **Judgement / residual — ADR-0010**  
-   boot 文案仍分散在 `loadProgress.ts` / `index.html`。非阻断。
+2. **OK — ADR-0008 / ADR-0007**  
+   GPU/FPS 接缝在 tools + e2e + play harness；无 React；未污染 rule core。
 
-3. **OK — ADR-0008 / ADR-0007 / CONTEXT**  
-   测量与 e2e 接缝未污染 rule core；无 React；无 Avoid 词新增问题。
+3. **Judgement / residual — ADR-0010**  
+   boot 文案仍分散（`loadProgress` / `index.html`）。非阻断。
 
 ### Baseline smells (judgement only)
 
 | Smell | Note |
 | --- | --- |
-| **Duplicated Code** | `isUhd620Class` 在 e2e 与 `measure-fps.mjs` 各一份 |
-| **Primitive Obsession** | `hasSustainedGrowth` 的 bytes 旋钮复用于 GPU **计数**样本 |
-| **Duplicated Code** | soak 内三处相同 GPU growth 选项 |
+| **Duplicated Code** | `chars-runtime ⊆ need` 在 `bootChars` 与 `fontCmap` 各断言一次 |
+| **Shotgun Surgery**（mild） | 字形契约跨 `requiredGlyphs` / chars 文件 / 两份 WOFF2 / README |
+
+无 hard documented-standard 阻断。
 
 ## Spec
 
 ### (a) Missing / partial
 
-1. **阻断 — 标点缺字（story 104 / ADR-0006 回归）**  
-   Spec：「startup does not show broken glyphs」。回修关闭了 boot 标签缺字，但重建字体使 HUD/菜单常用 `、` `…` `。` 等从子集消失 → 仍可 broken glyphs。
+无阻断项。
 
-2. **PARTIAL — UHD 620 mid 60 / top ≥30**  
-   Spec/AC 绝对门槛。测量与条件门已落盘；当前证据仅为 SwiftShader 样本（~8 fps）+ 主机 PCI 记录。未在可绑定 Intel UHD 的浏览器会话中跑通断言 → **不可标 AC 已满足**（环境缺口；需 DRM 可用的 headed 复验或 `needs-human` 设备证据，但本轮因字体回归仍判 fail）。
+1. **Residual — mid 断言容差**  
+   e2e 用 `MID_GAMEPLAY_FPS_TARGET * 0.9`（54）作下限；实测样本 ≈60，`budget-fps` 的 `midWithinBudget` 按满额 60。非阻断。
 
-3. **Residual — 真 VRAM**  
-   无公共 VRAM API；`renderer.info.memory` 为代理（已文档化）。可接受为接缝，非单独阻断。
+2. **Residual — 显存代理**  
+   `renderer.info.memory` 代理真 VRAM（无公共 API）；已文档化。非阻断。
 
 ### (b) Scope creep
 
-`budget:fps` CLI、PCI/`browserGpuAccess` 诊断 — 合理验收接缝。
+`ensure-dri-acl.sh` / ANGLE-Vulkan chrome args — 为闭合 UHD 绝对门槛的环境接缝，合理。
 
 ### (c) Looks done but wrong
 
-1. 「Boot 字体已修」≠ 子集整体健康（标点回退）。  
-2. 「FPS 接缝闭合」≠ 参考机 60/30 已验收。
+无。
 
 ### Verified OK
 
 | 验收项 | 证据 |
 | --- | --- |
-| 首屏 ≤3 MB | `budget-report.json` ≈354600 B |
-| Fast 4G 冷启动 ≤3s + 真实进度 | CDP 吞吐 + e2e |
-| draw call ≤100 | e2e |
-| court-palace 按需 ≤1 MB | ≈481 B |
-| 50/100/20 无持续增长（heap + GPU 代理） | `budget-runtime.json` |
+| 首屏 ≤3 MB | `budget-report.json` ≈357806 B |
+| Fast 4G ≤3s + 真实进度 | CDP 吞吐 e2e（既有） |
+| UHD 620 级 mid 60 / top ≥30 | UHD 630 ANGLE-Vulkan；`fpsGateApplied: true`；mid/top ≈60 |
+| draw call ≤100；主题按需 ≤1 MB | e2e + court-palace 报告 |
+| 50 / 100 / 20 无持续增长 | `budget-runtime.json` 全量 soak |
 
 ## Summary
 
 | Axis | Findings | Worst |
 | --- | --- | --- |
-| Standards | 先前 boot 六字 CLOSED；**标点 cmap 回退**为新 ADR-0006 hard | **WOFF2 丢掉 `、…。` 等** |
-| Spec | Fast4G / soak CLOSED；FPS 仅接缝；标点回归阻断 story 104 | **字体回归 + FPS 未在真 UHD 证明** |
+| Standards | punct hard CLOSED；仅 ADR-0010 / smells residual | 无阻断 |
+| Spec | 标点与 UHD 绝对 FPS 两阻断 CLOSED；容差/VRAM 代理 residual | 无阻断 |
 
-**Verdict `fail`**：回修闭合了前次三项主阻断中的字体六字 / Fast4G / soak，但字体重建引入标点缺字回归，且绝对 FPS 仍缺可绑定 iGPU 的证据。返修建议：把 UI 所用标点写入 `chars-runtime.txt`（或保留旧 punct unicodes）、重建并增加 **WOFF2 cmap ⊆ 所需字符** 的测试；在 `render`/`video` 组可用的 headed 会话跑 `budget:fps` / e2e 使 `fpsGateApplied: true`。不合回 `feature/wuf-49-ai-shuanghu-mvp`。
+**Verdict `pass`**：对照前次阻断与验收可收束。本轮按 Leader 指示不合回 `feature/wuf-49-ai-shuanghu-mvp`。
