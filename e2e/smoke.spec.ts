@@ -106,17 +106,57 @@ test('平胡 claim plays basic scene and shows settlement with replay', async ({
 
   await page.getByTestId('claim-win').click();
 
+  await expect(page.getByTestId('scene-bar')).toBeVisible();
+  await expect(page.getByTestId('win-banner')).toHaveClass(/basic/);
+  const duringScene = await page.evaluate(() => ({
+    playing: window.__play!.isScenePlaying(),
+    tier: window.__play!.lastScenePlans()[0]?.tier,
+    masterVisible: !document.querySelector('[data-testid="master-volume"]')?.closest('[hidden]'),
+    qualityHidden: getComputedStyle(document.querySelector('[data-testid="quality-select"]')!.closest('.quality-field')!).display === 'none',
+    themeOk: document.querySelector('[data-testid="theme-select"]') != null,
+    reducedOk: document.querySelector('[data-testid="reduced-motion"]') != null,
+  }));
+  expect(duringScene.playing).toBe(true);
+  expect(duringScene.tier).toBe('basic');
+  expect(duringScene.qualityHidden).toBe(true);
+  expect(duringScene.themeOk).toBe(true);
+  expect(duringScene.reducedOk).toBe(true);
+
+  await page.evaluate(() => window.__play!.skipScene());
   await expect(page.getByTestId('win-panel')).toBeVisible();
   await expect(page.getByTestId('win-summary')).toContainText('平胡');
   await expect(page.getByTestId('win-summary')).toContainText('1 番');
   await expect(page.getByTestId('status')).toContainText('平胡');
-
-  const plans = await page.evaluate(() => window.__play!.lastScenePlans());
-  expect(plans[0]?.tier).toBe('basic');
-  await expect(page.getByTestId('win-banner')).toHaveClass(/basic/);
+  await expect(page.getByTestId('replay-seat-0')).toBeVisible();
 
   await page.getByTestId('replay-scene').click();
+  await expect(page.getByTestId('scene-bar')).toBeVisible();
   await expect(page.getByTestId('win-banner')).toHaveClass(/basic/);
+  await page.evaluate(() => window.__play!.skipScene());
+  await expect(page.getByTestId('win-panel')).toBeVisible();
+});
+
+test('audio volumes and reduced motion persist; auto-skip is available', async ({ page }) => {
+  await page.goto('./');
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+
+  await page.evaluate(() => {
+    window.__play!.setMasterVolume(0.35);
+    window.__play!.setSfxVolume(0.55);
+    window.__play!.setReducedMotion('on');
+    window.__play!.setAutoSkipOpponent(true);
+  });
+  expect(await page.evaluate(() => window.__play!.masterVolume())).toBeCloseTo(0.35);
+  expect(await page.evaluate(() => window.__play!.sfxVolume())).toBeCloseTo(0.55);
+  expect(await page.evaluate(() => window.__play!.reducedMotionEnabled())).toBe(true);
+  expect(await page.evaluate(() => window.__play!.autoSkipOpponent())).toBe(true);
+
+  await page.reload();
+  await page.waitForFunction(() => window.__play?.ready === true, null, { timeout: 15_000 });
+  expect(await page.evaluate(() => window.__play!.masterVolume())).toBeCloseTo(0.35);
+  expect(await page.evaluate(() => window.__play!.sfxVolume())).toBeCloseTo(0.55);
+  expect(await page.evaluate(() => window.__play!.reducedMotionMode())).toBe('on');
+  expect(await page.evaluate(() => window.__play!.autoSkipOpponent())).toBe(true);
 });
 
 test('theme hot-switch persists, keeps mid-scene palette, and retains prior theme', async ({ page }) => {

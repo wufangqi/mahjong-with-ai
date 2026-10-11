@@ -1,5 +1,7 @@
+import type { Seat } from '../core';
 import type { MatchSnapshot } from '../game/match';
 import type { PlaySessionSnapshot } from '../game/session';
+import type { ReducedMotionMode } from '../motion';
 import type { GpuProbeInfo, QualityMode, QualitySettings, QualityTier } from '../quality/types';
 import type { ThemeId, ThemeModules, ThemePalette, ThemeSelectResult } from '../theme/types';
 import type { WinScenePlan } from './winPresentation';
@@ -24,7 +26,19 @@ declare global {
       startNextHand: (seed?: number) => void;
       loadPinghuWinDemo: () => void;
       replayScene: () => void;
+      replaySeat: (seat: Seat) => void;
+      skipScene: () => void;
+      isScenePlaying: () => boolean;
       lastScenePlans: () => WinScenePlan[];
+      setMasterVolume: (v: number) => void;
+      setSfxVolume: (v: number) => void;
+      masterVolume: () => number;
+      sfxVolume: () => number;
+      setReducedMotion: (mode: ReducedMotionMode) => void;
+      reducedMotionMode: () => ReducedMotionMode;
+      reducedMotionEnabled: () => boolean;
+      setAutoSkipOpponent: (enabled: boolean) => void;
+      autoSkipOpponent: () => boolean;
       selectTheme: (id: ThemeId) => Promise<ThemeSelectResult>;
       activeThemeId: () => ThemeId;
       themeApplied: () => ThemeModules;

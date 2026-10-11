@@ -22,7 +22,7 @@
       <span>主题</span>
       <select id="theme-select" data-testid="theme-select" aria-label="主题"></select>
     </label>
-    <label class="theme-field quality-field">
+    <label class="theme-field quality-field" data-scene-lock="hide">
       <span>画质</span>
       <select id="quality-select" data-testid="quality-select" aria-label="画质">
         <option value="auto">自动</option>
@@ -31,7 +31,31 @@
         <option value="high">高</option>
       </select>
     </label>
-    <a class="preview-link" href="./preview.html">效果预览</a>
+    <label class="theme-field volume-field" data-scene-lock="keep">
+      <span>主音量</span>
+      <input id="master-volume" data-testid="master-volume" type="range" min="0" max="1" step="0.05" value="0.8" aria-label="主音量" />
+    </label>
+    <label class="theme-field volume-field" data-scene-lock="keep">
+      <span>音效</span>
+      <input id="sfx-volume" data-testid="sfx-volume" type="range" min="0" max="1" step="0.05" value="0.7" aria-label="音效音量" />
+    </label>
+    <label class="theme-field" data-scene-lock="keep">
+      <span>减少动态</span>
+      <select id="reduced-motion" data-testid="reduced-motion" aria-label="减少动态效果">
+        <option value="system">跟随系统</option>
+        <option value="on">开启</option>
+        <option value="off">关闭</option>
+      </select>
+    </label>
+    <label class="theme-field" data-scene-lock="keep">
+      <span>跳过对手</span>
+      <input id="auto-skip-opponent" data-testid="auto-skip-opponent" type="checkbox" aria-label="自动跳过对手场面" />
+    </label>
+    <a class="preview-link" href="./preview.html" data-scene-lock="hide">效果预览</a>
+  </div>
+
+  <div id="scene-bar" data-testid="scene-bar" hidden>
+    <button id="skip-scene" data-testid="skip-scene" type="button">跳过场面</button>
   </div>
 
   <div id="main-menu" data-testid="main-menu">
@@ -87,7 +111,7 @@
       <p class="win-intro">赢家 · 番型 · 番数 · 无整场总分</p>
       <div id="win-summary" data-testid="win-summary" class="win-summary"></div>
       <div class="win-actions">
-        <button id="replay-scene" data-testid="replay-scene" type="button">重播场面</button>
+        <button id="replay-scene" data-testid="replay-scene" type="button">全部重播</button>
         <button id="win-next-hand" data-testid="win-next-hand" type="button">下一局</button>
         <button id="end-match-win" data-testid="end-match-win" type="button">结束</button>
       </div>

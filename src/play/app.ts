@@ -1,5 +1,12 @@
+import {
+  AudioController,
+  playSynthesized,
+  sfxForDomainEvent,
+  sfxForSceneTier,
+} from '../audio';
 import { FULL_SET_SIZE, PLAYER_SEAT, totalTileCount, type Seat } from '../core';
 import { MatchSession } from '../game/match';
+import { isReducedMotionMode, ReducedMotionController } from '../motion';
 import { probeFromRenderer } from '../particles/probe';
 import { QualityController } from '../quality/qualityController';
 import { isQualityTier, type QualityTier } from '../quality/types';
@@ -10,6 +17,8 @@ import type { ThemeId } from '../theme/types';
 import { TableView } from './tableView';
 import { formatTileCodes } from './tileLabels';
 import { patternLabels, WinSceneScheduler, type WinScenePlan } from './winPresentation';
+
+const AUTO_SKIP_STORAGE_KEY = 'mahjong.scene.autoSkipOpponent';
 
 function mustEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -81,14 +90,24 @@ export function bootPlayApp(): void {
   const banner = mustEl<HTMLElement>('banner');
   const bannerMain = mustEl<HTMLElement>('banner-main');
   const bannerSub = mustEl<HTMLElement>('banner-sub');
+  const masterVolumeInput = mustEl<HTMLInputElement>('master-volume');
+  const sfxVolumeInput = mustEl<HTMLInputElement>('sfx-volume');
+  const reducedMotionSelect = mustEl<HTMLSelectElement>('reduced-motion');
+  const autoSkipOpponentInput = mustEl<HTMLInputElement>('auto-skip-opponent');
+  const sceneBar = mustEl<HTMLElement>('scene-bar');
+  const skipSceneBtn = mustEl<HTMLButtonElement>('skip-scene');
 
   seedInput.value = String(DEFAULT_SEED);
 
   const match = new MatchSession();
   const session = match.hand;
   const table = new TableView(canvas);
-  const scenes = new WinSceneScheduler();
   const storage = browserStorage();
+  const scenes = new WinSceneScheduler({
+    now: () => performance.now(),
+    defer: (fn, ms) => window.setTimeout(fn, ms),
+    cancelDefer: (h) => window.clearTimeout(h as number),
+  });
   const themes = new ThemeManager({
     storage,
     now: () => performance.now(),
@@ -99,8 +118,14 @@ export function bootPlayApp(): void {
   });
   const quality = new QualityController({ storage });
   quality.restore();
+  const audio = new AudioController({ storage, play: playSynthesized });
+  audio.restore();
+  const reducedMotion = new ReducedMotionController({ storage });
+  reducedMotion.restore();
+  scenes.setAutoSkipOpponent(storage.getItem(AUTO_SKIP_STORAGE_KEY) === '1');
   const gpuProbe = probeFromRenderer(table.renderer);
   let lastHandWonEventCount = 0;
+  let lastEventCount = 0;
   let sceneReleaseTimer: number | null = null;
   let lastFrameAt = performance.now();
   let fpsEma = 60;
@@ -165,15 +190,35 @@ export function bootPlayApp(): void {
     syncThemeChrome();
   };
 
-  const showScene = (plans: WinScenePlan[]): void => {
-    const plan = plans[0];
-    if (!plan) return;
+  const syncAudioChrome = (): void => {
+    masterVolumeInput.value = String(audio.getMasterVolume());
+    sfxVolumeInput.value = String(audio.getSfxVolume());
+  };
+
+  const syncMotionChrome = (): void => {
+    reducedMotionSelect.value = reducedMotion.getMode();
+    document.body.dataset.reducedMotion = reducedMotion.isEnabled() ? 'on' : 'off';
+    autoSkipOpponentInput.checked = scenes.getAutoSkipOpponent();
+  };
+
+  const setSceneChrome = (playing: boolean): void => {
+    document.body.classList.toggle('scene-playing', playing);
+    sceneBar.hidden = !playing;
+    if (playing) {
+      winPanel.hidden = true;
+      responseBar.hidden = true;
+      selfBar.hidden = true;
+    }
+  };
+
+  const showScene = (plan: WinScenePlan): void => {
     const palette = themes.captureScenePalette();
     document.documentElement.style.setProperty('--banner-basic', palette.bannerBasic);
     bannerMain.textContent = plan.bannerMain;
     bannerSub.textContent = plan.bannerSub;
     banner.className = `show ${plan.tier}`;
     banner.style.setProperty('--delay', '0s');
+    audio.play(sfxForSceneTier(plan.tier));
     if (sceneReleaseTimer !== null) window.clearTimeout(sceneReleaseTimer);
     sceneReleaseTimer = window.setTimeout(() => {
       themes.releaseScenePalette();
@@ -183,7 +228,17 @@ export function bootPlayApp(): void {
     }, 2400);
   };
 
-  scenes.onPlay(showScene);
+  scenes.onPlay(() => {
+    setSceneChrome(true);
+  });
+  scenes.onScene((plan) => {
+    setSceneChrome(true);
+    showScene(plan);
+  });
+  scenes.onIdle(() => {
+    setSceneChrome(false);
+    refresh();
+  });
 
   const showMenu = (): void => {
     document.body.classList.add('menu');
@@ -283,7 +338,7 @@ export function bootPlayApp(): void {
 
   const renderWinPanel = (): void => {
     const snap = session.snapshot();
-    if (snap.status !== 'hand_won' || !snap.winSettlement) {
+    if (snap.status !== 'hand_won' || !snap.winSettlement || scenes.isPlaying()) {
       winPanel.hidden = true;
       winSummary.replaceChildren();
       return;
@@ -301,8 +356,27 @@ export function bootPlayApp(): void {
         `<div class="win-patterns">${labels}</div>`,
         `<div class="win-hand">手牌 ${formatTileCodes(winner.hand.map((t) => t.code))}</div>`,
       ].join('');
+      const actions = document.createElement('div');
+      actions.className = 'win-seat-actions';
+      const replayOne = document.createElement('button');
+      replayOne.type = 'button';
+      replayOne.dataset.testid = `replay-seat-${winner.seat}`;
+      replayOne.textContent = '单独重播';
+      replayOne.addEventListener('click', () => scenes.replaySeat(winner.seat));
+      actions.append(replayOne);
+      row.append(actions);
       winSummary.append(row);
     }
+  };
+
+  const playNewEventSfx = (): void => {
+    const events = session.snapshot().events;
+    if (events.length < lastEventCount) lastEventCount = 0;
+    for (let i = lastEventCount; i < events.length; i++) {
+      const id = sfxForDomainEvent(events[i]!);
+      if (id) audio.play(id);
+    }
+    lastEventCount = events.length;
   };
 
   const maybeScheduleWinScene = (): void => {
@@ -319,6 +393,7 @@ export function bootPlayApp(): void {
     const matchSnap = match.snapshot();
     const snap = matchSnap.hand;
     table.sync(snap.state, snap.selectedTileId);
+    playNewEventSfx();
     maybeScheduleWinScene();
 
     if (matchSnap.status === 'menu' || !snap.state) {
@@ -340,22 +415,27 @@ export function bootPlayApp(): void {
       `实体牌 ${totalTileCount(snap.state)}/${FULL_SET_SIZE}`,
     ].join(' · ');
 
+    const scenePlaying = scenes.isPlaying();
+    setSceneChrome(scenePlaying);
+
     const responding =
-      snap.status === 'awaiting_player_win_response' ||
-      snap.status === 'awaiting_player_claim_response';
+      !scenePlaying &&
+      (snap.status === 'awaiting_player_win_response' ||
+        snap.status === 'awaiting_player_claim_response');
     responseBar.hidden = !responding;
     claimWinBtn.hidden = responding ? !snap.playerCanWin : true;
-    claimKongBtn.hidden = snap.status !== 'awaiting_player_claim_response' || !snap.playerCanKong;
-    claimPungBtn.hidden = snap.status !== 'awaiting_player_claim_response' || !snap.playerCanPung;
+    claimKongBtn.hidden = snap.status !== 'awaiting_player_claim_response' || !snap.playerCanKong || scenePlaying;
+    claimPungBtn.hidden = snap.status !== 'awaiting_player_claim_response' || !snap.playerCanPung || scenePlaying;
     renderChowOptions();
 
     const selfActions =
+      !scenePlaying &&
       snap.status === 'awaiting_player_discard' &&
       (snap.playerCanWin ||
         snap.playerConcealedKongCodes.length > 0 ||
         snap.playerAddedKongCodes.length > 0);
     selfBar.hidden = !selfActions;
-    declareWinBtn.hidden = !snap.playerCanWin || snap.status !== 'awaiting_player_discard';
+    declareWinBtn.hidden = !snap.playerCanWin || snap.status !== 'awaiting_player_discard' || scenePlaying;
     renderKongOptions();
 
     if (snap.status === 'awaiting_player_discard') {
@@ -399,6 +479,7 @@ export function bootPlayApp(): void {
 
   const startNewMatch = (seed: number): void => {
     lastHandWonEventCount = 0;
+    lastEventCount = 0;
     quality.endGame();
     if (quality.getMode() === 'auto') {
       quality.selectInitial(gpuProbe, fpsEma);
@@ -429,6 +510,7 @@ export function bootPlayApp(): void {
   passBtn.addEventListener('click', () => session.passResponse());
   const goNextHand = (): void => {
     lastHandWonEventCount = 0;
+    lastEventCount = 0;
     match.nextHand();
     const nextSeed = session.snapshot().seed;
     if (nextSeed !== null) seedInput.value = String(nextSeed);
@@ -437,18 +519,41 @@ export function bootPlayApp(): void {
   winNextHandBtn.addEventListener('click', goNextHand);
   const endCurrentMatch = (): void => {
     lastHandWonEventCount = 0;
+    lastEventCount = 0;
     quality.endGame();
     match.endMatch();
     table.sync(null, null);
   };
   endMatchDrawBtn.addEventListener('click', endCurrentMatch);
   endMatchWinBtn.addEventListener('click', endCurrentMatch);
-  replaySceneBtn.addEventListener('click', () => scenes.replay());
+  replaySceneBtn.addEventListener('click', () => scenes.replayAll());
+  skipSceneBtn.addEventListener('click', () => scenes.skip());
+
+  masterVolumeInput.addEventListener('input', () => {
+    audio.setMasterVolume(Number.parseFloat(masterVolumeInput.value));
+  });
+  sfxVolumeInput.addEventListener('input', () => {
+    audio.setSfxVolume(Number.parseFloat(sfxVolumeInput.value));
+  });
+  reducedMotionSelect.addEventListener('change', () => {
+    const value = reducedMotionSelect.value;
+    if (!isReducedMotionMode(value)) {
+      reducedMotionSelect.value = reducedMotion.getMode();
+      return;
+    }
+    reducedMotion.setMode(value);
+    syncMotionChrome();
+  });
+  autoSkipOpponentInput.addEventListener('change', () => {
+    scenes.setAutoSkipOpponent(autoSkipOpponentInput.checked);
+    storage.setItem(AUTO_SKIP_STORAGE_KEY, autoSkipOpponentInput.checked ? '1' : '0');
+  });
 
   let pointerDownAt: { x: number; y: number; tileId: string } | null = null;
   let dragging = false;
 
   canvas.addEventListener('pointerdown', (e) => {
+    if (scenes.isPlaying()) return;
     if (session.snapshot().status !== 'awaiting_player_discard') return;
     const tileId = table.pickPlayerTile(e.clientX, e.clientY);
     if (!tileId) return;
@@ -548,6 +653,7 @@ export function bootPlayApp(): void {
     },
     loadPinghuWinDemo: () => {
       lastHandWonEventCount = 0;
+      lastEventCount = 0;
       if (match.snapshot().status === 'menu') {
         startNewMatch(DEFAULT_SEED);
       }
@@ -555,8 +661,33 @@ export function bootPlayApp(): void {
       // Demo settles as an in-match hand for settlement / end UI.
       refresh();
     },
-    replayScene: () => scenes.replay(),
+    replayScene: () => scenes.replayAll(),
+    replaySeat: (seat: Seat) => scenes.replaySeat(seat),
+    skipScene: () => scenes.skip(),
+    isScenePlaying: () => scenes.isPlaying(),
     lastScenePlans: () => scenes.getLastPlans(),
+    setMasterVolume: (v: number) => {
+      audio.setMasterVolume(v);
+      syncAudioChrome();
+    },
+    setSfxVolume: (v: number) => {
+      audio.setSfxVolume(v);
+      syncAudioChrome();
+    },
+    masterVolume: () => audio.getMasterVolume(),
+    sfxVolume: () => audio.getSfxVolume(),
+    setReducedMotion: (mode: 'system' | 'on' | 'off') => {
+      reducedMotion.setMode(mode);
+      syncMotionChrome();
+    },
+    reducedMotionMode: () => reducedMotion.getMode(),
+    reducedMotionEnabled: () => reducedMotion.isEnabled(),
+    setAutoSkipOpponent: (enabled: boolean) => {
+      scenes.setAutoSkipOpponent(enabled);
+      storage.setItem(AUTO_SKIP_STORAGE_KEY, enabled ? '1' : '0');
+      syncMotionChrome();
+    },
+    autoSkipOpponent: () => scenes.getAutoSkipOpponent(),
     selectTheme: async (id: ThemeId) => {
       const from = themes.getApplied();
       const result = await themes.select(id);
@@ -617,6 +748,8 @@ export function bootPlayApp(): void {
     }
     applyQualityToTable();
     syncQualityChrome();
+    syncAudioChrome();
+    syncMotionChrome();
     showMenu();
     document.body.classList.add('ready');
     if (window.__play) window.__play.ready = true;
